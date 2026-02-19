@@ -1052,3 +1052,53 @@ Responsibilities of `Receipts::Builder`:
 | Fat models | Hard to maintain | Extract to namespaced services |
 | Fat controllers | Hard to test | Thin controller + model method |
 | Complex conditionals | Hard to read | Guard clauses |
+
+---
+
+## Promo Campaigns & Coupons Notes
+
+These are project-specific rules discovered while working with promo campaign coupon generation and cleanup.
+
+### Coupon Generation Flow
+
+- Entry point is `PromoCampaign#start_generation!(initiator:)`.
+- `start_generation!` creates a `PromoCampaignOperation` with `operation_type: :generate` and `status: :processing`.
+- `PromoCampaigns::CouponGeneratorWorker` processes this operation and creates coupons one-by-one via `Coupons::CouponCreator`.
+- Do not re-run generation guard checks inside the worker that block `processing` state operations.
+
+### Partial Generation Policy
+
+- Partial generation is allowed by business logic.
+- If generation fails in the middle, already created coupons must remain.
+- In failure case:
+  - operation status becomes `failed`
+  - `error_message` is filled
+  - generated count is still stored in operation metadata
+
+### Operation Metadata Convention
+
+- `PromoCampaignOperation` keeps runtime generation details in `metadata`.
+- Use string keys in metadata consistently.
+- For generated count always use:
+  - key: `'generated_coupons_count'`
+- Accessor should read the same string key:
+  - `metadata.fetch('generated_coupons_count', 0)`
+
+### Cleanup Constraints
+
+- `PromoCampaigns::ArchivedCleanupWorker` deletes archived campaigns only if `promo_campaign.can_delete_coupons?` is true.
+- `PromoCampaign#can_delete_coupons?` depends on:
+  - no `processing` operations
+  - no used coupons (`contains_used_coupons?`)
+- `contains_used_coupons?` treats coupons as used if `uses_left` differs from campaign `uses`.
+- In cleanup specs, coupons intended for deletion should be created with:
+  - `uses_left: promo_campaign.uses`
+
+### Testing Expectations
+
+- Worker specs should validate:
+  - coupon count change
+  - operation final status
+  - `generated_coupons_count` for success/failure/partial failure
+  - success/failure mailer call
+- If a spec around metadata behaves unexpectedly after `reload`, first verify test DB schema is up to date for `promo_campaign_operations.metadata`.
