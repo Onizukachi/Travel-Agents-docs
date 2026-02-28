@@ -67,7 +67,7 @@ Generated code should:
   Application and domain services. Contains business logic and workflows
 
 - `app/apis/`
-  Used for interaction with payment gateways and fiscal processors only.
+  Used for external service clients and integration classes (including payment gateways and fiscal processors).
 
 - `app/models/`
   ActiveRecord models and domain concerns.
@@ -180,7 +180,7 @@ end
 
 ```ruby
 class Cloud < ApplicationRecord
-  enum :state, %w(uploaded analyzing analyzed generating generated failed).index_by(&:itself)
+  enum :state, %w(uploaded analyzing analyzed generating generated failed).index_with(&:to_s)
 end
 
 # Usage:
@@ -294,8 +294,6 @@ module Clouds
 end
 
 ```
-
-Delegates to related objects. Returns simple values, Dry::Monads[:result], or raises exceptions on error.
 
 ### Callbacks: Use Sparingly
 
@@ -527,6 +525,13 @@ create_table :clouds do |t|
 end
 ```
 
+### Migration & Schema Workflow
+
+- After adding or changing migrations, run `bundle exec rails db:migrate`.
+- After both migrate and rollback, `db/schema.rb` may include unrelated local drift changes.
+- Remove unrelated schema changes and keep only changes relevant to your migration task.
+- Keep `ActiveRecord::Schema.define(version: ...)` aligned with the currently latest applied migration (after both migrate and rollback).
+
 ## Job Patterns
 
 ### Jobs Orchestrate, Models Execute
@@ -582,14 +587,14 @@ end
 def moderate(_step)
   # Do work
   cloud.update!(state: :analyzed)
-rescue => err
+rescue => e
   Sentry.capture_exception(e)
-  cloud.update!(state: :failed, failure_reason: err.message)
+  cloud.update!(state: :failed, failure_reason: e.message)
 end
 ```
 
 Always:
-- Catch errors with `rescue => err`
+- Catch errors with `rescue => e`
 - Report to error tracking
 - Update model state to reflect failure
 - Don't re-raise unless you want the entire job to fail
@@ -942,7 +947,7 @@ Characteristics:
 
 When the user selects a payment method and confirms the purchase, the frontend sends a request to:
 
-- `Papi::V3::OrdersController#prebuild`
+- `Papi::V3::OrdersController#create`
 
 Characteristics:
 - The order is persisted in the database.
@@ -997,7 +1002,7 @@ Each processor encapsulates:
 
 Most payment gateways operate asynchronously.
 
-After payment actions (authorization, capture, refund), external providers send callbacks (webhooks) to the system.
+After payment actions (authorization, unfreeze, capture, refund), external providers send callbacks (webhooks) to the system.
 
 Callback handling:
 - Implemented in classes with the `_callback_processor` suffix.
@@ -1050,55 +1055,7 @@ Responsibilities of `Receipts::Builder`:
 | Concern for logic | Magic, hard to trace | Inheritance or delegation |
 | String state | Type-unsafe | Enum |
 | Fat models | Hard to maintain | Extract to namespaced services |
-| Fat controllers | Hard to test | Thin controller + model method |
+| Fat controllers | Hard to test | Thin controller + model method or services |
 | Complex conditionals | Hard to read | Guard clauses |
 
 ---
-
-## Promo Campaigns & Coupons Notes
-
-These are project-specific rules discovered while working with promo campaign coupon generation and cleanup.
-
-### Coupon Generation Flow
-
-- Entry point is `PromoCampaign#start_generation!(initiator:)`.
-- `start_generation!` creates a `PromoCampaignOperation` with `operation_type: :generate` and `status: :processing`.
-- `PromoCampaigns::CouponGeneratorWorker` processes this operation and creates coupons one-by-one via `Coupons::CouponCreator`.
-- Do not re-run generation guard checks inside the worker that block `processing` state operations.
-
-### Partial Generation Policy
-
-- Partial generation is allowed by business logic.
-- If generation fails in the middle, already created coupons must remain.
-- In failure case:
-  - operation status becomes `failed`
-  - `error_message` is filled
-  - generated count is still stored in operation metadata
-
-### Operation Metadata Convention
-
-- `PromoCampaignOperation` keeps runtime generation details in `metadata`.
-- Use string keys in metadata consistently.
-- For generated count always use:
-  - key: `'generated_coupons_count'`
-- Accessor should read the same string key:
-  - `metadata.fetch('generated_coupons_count', 0)`
-
-### Cleanup Constraints
-
-- `PromoCampaigns::ArchivedCleanupWorker` deletes archived campaigns only if `promo_campaign.can_delete_coupons?` is true.
-- `PromoCampaign#can_delete_coupons?` depends on:
-  - no `processing` operations
-  - no used coupons (`contains_used_coupons?`)
-- `contains_used_coupons?` treats coupons as used if `uses_left` differs from campaign `uses`.
-- In cleanup specs, coupons intended for deletion should be created with:
-  - `uses_left: promo_campaign.uses`
-
-### Testing Expectations
-
-- Worker specs should validate:
-  - coupon count change
-  - operation final status
-  - `generated_coupons_count` for success/failure/partial failure
-  - success/failure mailer call
-- If a spec around metadata behaves unexpectedly after `reload`, first verify test DB schema is up to date for `promo_campaign_operations.metadata`.
