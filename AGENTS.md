@@ -17,6 +17,12 @@ Generated code should:
 - Be readable without comments
 - Normalize data properly (separate concerns into tables, not columns)
 
+### LT CLI in Shell Session
+
+- Always preload `lt` before using LT commands in terminal sessions:
+  - `source ./lt.sh`
+- Run LT commands through this loaded function (for example, `lt logs rails`, `lt status`).
+
 ## Technology Stack & Gems
 
 **Only use these gems.** If you want to add something not listed, ask in a clarifying comment.
@@ -1059,3 +1065,12 @@ Responsibilities of `Receipts::Builder`:
 | Complex conditionals | Hard to read | Guard clauses |
 
 ---
+
+## ActiveAdmin UI Testing (MCP)
+
+- Before opening any UI page, start server logs:
+  - `lt logs rails`
+- Open the target page directly (for example, `https://leveltravel.dev/admin/payment_logs`).
+- If authentication is required, click `Войти` (credentials are already prefilled in the browser session).
+- If the page is unavailable or returns `502 Bad Gateway`, reload and retry.
+- If UI errors happen, use Rails logs to identify and fix the issue.
