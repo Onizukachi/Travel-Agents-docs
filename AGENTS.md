@@ -77,8 +77,7 @@ If you want to add a new gem, propose it first (with a short rationale and trade
 ## Formatting
 
 - For Ruby percent literals, prefer parentheses delimiters: `%w(...)`, `%i(...)`, `%W(...)`, `%I(...)`, `%q(...)`, `%Q(...)`, `%r(...)`, `%x(...)`.
-- Avoid bracket style for percent literals (for example, `%w[...]`).
-- Prefer double-quoted strings unless you need single quotes to avoid extra backslashes for escaping.
+-  Prefer single-quoted strings unless you need double quotes for interpolation, escape sequences, or to avoid extra backslashes.
 
 ---
 
@@ -935,7 +934,7 @@ Before writing/generating code, ask:
 
 - [ ] Is this named after a business domain concept (not technical)?
 - [ ] Is the model organized in the right order (gems → associations → enums → validations → scopes)?
-- [ ] Are states string-backed enums (`index_with(&:to_s)`)?
+- [ ] Are states in enums, not string columns?
 - [ ] Is the controller action under 15 lines?
 - [ ] Is complex logic extracted to namespaced service classes (e.g., `Clouds::CardGenerator`)?
 - [ ] Is the database normalized (one concern per table)?
