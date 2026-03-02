@@ -14,7 +14,6 @@ Generated code should:
 - Follow Rails conventions (not fight the framework)
 - Use domain language (Participant, not User; Cloud, not GeneratedImage)
 - Keep logic at the right layer (models handle data, controllers handle HTTP, jobs coordinate workflows)
-- Be readable without comments
 - Normalize data properly (separate concerns into tables, not columns)
 
 ### LT CLI in Shell Session
@@ -25,7 +24,8 @@ Generated code should:
 
 ## Technology Stack & Gems
 
-**Only use these gems.** If you want to add something not listed, ask in a clarifying comment.
+These are the gems currently used in the project.
+If you want to add a new gem, propose it first (with a short rationale and tradeoffs) and wait for approval before adding it.
 
 ### Core Rails & Server
 - `rails`
@@ -62,12 +62,60 @@ Generated code should:
 - Complex operations go in namespaced service classes: `Clouds::CardGenerator` in `services` folder
 ---
 
+## Debugging and Development
+
+- Use `rails console` for interactive debugging.
+- Use `binding.irb` for breakpoints in development.
+
+## Localization (I18n)
+
+- Prefer translations in `config/locales/ru.yml` for validation errors, model attribute names, and model names.
+- Use Rails I18n keys under `activerecord.errors.models`, `activerecord.attributes`, and `activerecord.models` instead of hardcoded Russian strings.
+
+---
+
+## Formatting
+
+- For Ruby percent literals, prefer parentheses delimiters: `%w(...)`, `%i(...)`, `%W(...)`, `%I(...)`, `%q(...)`, `%Q(...)`, `%r(...)`, `%x(...)`.
+- Avoid bracket style for percent literals (for example, `%w[...]`).
+- Prefer double-quoted strings unless you need single quotes to avoid extra backslashes for escaping.
+
+---
+
+## Code Clarity Guidelines
+
+### Constants Over Magic Numbers
+
+- Replace hard-coded values with named constants.
+- Use descriptive constant names that explain the value's purpose.
+- Keep constants at the top of the class/module or in a dedicated constants file when shared.
+
+### Meaningful Names
+
+- Variables, methods, and classes should reveal their purpose.
+- Names should explain why something exists and how it is used.
+- Avoid abbreviations unless they are universally understood (`API`, `URL`, `ID`).
+
+### Smart Comments
+
+- Prefer self-documenting code over comments that repeat what the code already says.
+- Use comments to explain why something is implemented a certain way.
+- Document API contracts, complex algorithms, and non-obvious side effects.
+
+### Single Responsibility
+
+- Each method should do exactly one thing.
+- Keep methods small and focused.
+- If a method needs an explanatory comment to describe what it does, split it into smaller methods.
+
+---
+
 ## File structure
 - `app/admin/`
   ActiveAdmin controllers
 
 - `app/controllers/`
-  API controllers only (no HTML controllers).
+  Application controllers (API and web).
 
 - `app/services/`
   Application and domain services. Contains business logic and workflows
@@ -97,6 +145,20 @@ Generated code should:
 
 - `app/uploaders/`
   CarrierWave uploaders and related configuration.
+
+## ActiveAdmin Resource Order
+
+For files in `app/admin/*.rb`, follow this baseline order:
+
+1. Base config: `menu`, `actions`, `permit_params`, `includes`, `config.*`
+2. `scope`
+3. `filter` (including custom filter collections/options)
+4. Presentation blocks: `index`, `show`, `form`
+5. UI actions: `action_item`, `batch_action`, `sidebar`
+6. Custom actions: `member_action`, `collection_action`
+7. `controller do ... end` (overrides and private helpers)
+
+If you need exceptions, keep them minimal and prefer this order for readability.
 
 ## Model Patterns
 
@@ -137,41 +199,41 @@ Always follow this order in model files:
 
 ```ruby
 class Cloud < ApplicationRecord
-  # 1. Gems and DSL extensions
+  # Gems and DSL extensions
   extend FriendlyId
   friendly_id :name, use: [:slugged, :finders]
 
-  # 2. Associations
+  # Associations
   belongs_to :participant
   has_many :invitations, dependent: :destroy
   has_one :latest_invitation, -> { order(created_at: :desc) }, class_name: "Invitation"
 
-  # 3. Enums (for state)
-  enum :state, %w(uploaded analyzing analyzed generating generated failed).index_by(&:itself)
+  # Enums (for state)
+  enum :state, %w(uploaded analyzing analyzed generating generated failed).index_with(&:to_s)
 
-  # 5. Validations
+  # Validations
   validates :name, :state, presence: true
   validates :participant_id, presence: true
 
-  # 6. Scopes
+  # Scopes
   scope :generated, -> { where(state: :generated) }
   scope :picked, -> { where(picked: true) }
   scope :recent, -> { order(created_at: :desc) }
 
-  # 7. Callbacks
+  # Callbacks
   before_create do
     self.state ||= :uploaded
   end
 
-  # 8. Delegated methods
+  # Delegated methods
   delegate :email, to: :participant, prefix: true
 
-  # 9. Public instance methods
+  # Public instance methods
   def ready_to_generate?
     analyzed? && !generating?
   end
 
-  # 10. Private methods
+  # Private methods
   private
 
   def generate_filename
@@ -182,7 +244,7 @@ end
 
 ### Use Enums for State
 
-**Always use enums for states.** No string columns like `status` or `state_string`.
+**Always use enums for states.** Keep `state`/`status` as string columns in the database and map enum values with `index_with(&:to_s)`.
 
 ```ruby
 class Cloud < ApplicationRecord
@@ -199,7 +261,7 @@ Why: Type-safe, gives you predicate methods for free, database-efficient.
 
 ### Thin Models, Smart Organization
 
-**Model should not be 100+ lines.** If it is, extract to namespaced services or concerns.
+**Model should not be 100+ lines.** If it is, extract to namespaced services.
 
 **Bad (Model too fat):**
 ```ruby
@@ -441,46 +503,6 @@ end
 
 Guard clauses make the happy path obvious.
 
-### Don't Use Concerns for Business Logic
-
-**Bad:**
-```ruby
-module TokenAuthenticated
-  extend ActiveSupport::Concern
-
-  included do
-    before_action :authenticate_by_token!
-  end
-
-  def authenticate_by_token!
-    # ...
-  end
-end
-
-class CloudsController < ApplicationController
-  include TokenAuthenticated
-end
-```
-
-**Good:**
-```ruby
-class Participant::ApplicationController < ApplicationController
-  before_action :set_participant
-
-  private
-
-  def set_participant
-    @participant = Participant.find_by!(access_token: params[:access_token])
-  end
-end
-
-class Participant::CloudsController < Participant::ApplicationController
-  # Inheritance handles scoping, no magic
-end
-```
-
-Inheritance is clearer than concerns.
-
 ---
 
 ## Database Design & Migrations
@@ -514,8 +536,8 @@ create_table :participants do |t|
 end
 
 create_table :invitations do |t|
-  t.integer :participant_id, null: false, foreign_key: true
-  t.enum :status, enum_type: :invitation_status, default: "sent"
+  t.references :participant, null: false, foreign_key: true
+  t.string :status, null: false, default: "sent"
   t.datetime :opened_at
   t.string :bounce_type
   t.datetime :bounced_at
@@ -523,13 +545,15 @@ create_table :invitations do |t|
 end
 
 create_table :clouds do |t|
-  t.integer :participant_id, null: false, foreign_key: true
-  t.enum :state, enum_type: :cloud_state, default: "uploaded"
+  t.references :participant, null: false, foreign_key: true
+  t.string :state, null: false, default: "uploaded"
   t.boolean :picked, default: false
   t.string :failure_reason
   t.timestamps
 end
 ```
+
+Use ActiveRecord enums in models for these string state columns.
 
 ### Migration & Schema Workflow
 
@@ -540,7 +564,7 @@ end
 
 ## Job Patterns
 
-### Jobs Orchestrate, Models Execute
+### Jobs Orchestrate, Services Execute
 
 **Good separation:**
 ```ruby
@@ -630,7 +654,7 @@ Always:
 **Bad:** N+1 queries, complex logic in views
 ```erb
 <!-- DON'T: complex query logic -->
-<% @clouds.select { |c| c.participant.premium? && c.state.in?(%w[generated]) } %>
+<% @clouds.select { |c| c.participant.premium? && c.state.in?(%w(generated)) } %>
 ```
 
 **Instead:** Query object or scope
@@ -654,6 +678,23 @@ scope :recent, -> { order(created_at: :desc) }
 ### RSpec > Minitest
 
 Use RSpec for better DSL and readability.
+
+### Testing Commands
+
+Run individual test files using:
+
+```bash
+# Run specific spec file
+bin/rspec spec/models/user_spec.rb
+
+# Run specific test
+bin/rspec spec/models/user_spec.rb:25
+```
+
+### Test Data Performance
+
+- Prefer `let_it_be` where possible to speed up test suites.
+- If an object is modified in examples, use `let_it_be_with_reload`.
 
 ### Test Organization
 
@@ -781,32 +822,6 @@ end
 
 ## Common Patterns & Anti-Patterns
 
-### Pattern: Guard Clauses Over Nested Conditionals
-
-**Bad:**
-```ruby
-def create
-  if admin?
-    if params[:valid]
-      if check_limit
-        create_object
-      end
-    end
-  end
-end
-```
-
-**Good:**
-```ruby
-def create
-  return head 401 unless admin?
-  return head 422 unless params[:valid]
-  return head 429 unless check_limit
-
-  create_object
-end
-```
-
 ### Pattern: Delegation Over Inheritance for Small Helpers
 
 **Bad:**
@@ -899,8 +914,8 @@ Participant.all.includes(:clouds)
 
 ```ruby
 create_table :clouds do |t|
-  t.integer :participant_id
-  t.enum :state
+  t.references :participant, null: false, foreign_key: true
+  t.string :state, null: false, default: "uploaded"
   t.boolean :picked
 
   t.index [:participant_id, :state]  # Composite index
@@ -920,128 +935,23 @@ Before writing/generating code, ask:
 
 - [ ] Is this named after a business domain concept (not technical)?
 - [ ] Is the model organized in the right order (gems → associations → enums → validations → scopes)?
-- [ ] Are states in enums, not string columns?
+- [ ] Are states string-backed enums (`index_with(&:to_s)`)?
 - [ ] Is the controller action under 15 lines?
 - [ ] Is complex logic extracted to namespaced service classes (e.g., `Clouds::CardGenerator`)?
 - [ ] Is the database normalized (one concern per table)?
 - [ ] Are tests in RSpec, not minitest?
 - [ ] Are views simple (scopes/associations, no complex logic)?
+- [ ] Are validation errors, model attributes, and model names translated through `config/locales/ru.yml`?
+- [ ] For `app/admin/*.rb`, are blocks organized in the agreed ActiveAdmin order?
 
 If yes to all: your code is ready to ship.
 
 ---
 
-## Orders, Payments, and Receipts flow
+## Payments Playbook
 
-This section describes the end-to-end flow of order creation, payment processing, and receipt generation.
-
-### 1. Order prebuild (draft state)
-
-During order formation (traveler details input, coupon application, price recalculation), the frontend sends incremental updates to:
-
-- `Papi::V3::OrdersController#prebuild`
-
-Characteristics:
-- The order is not persisted yet.
-- The endpoint is used for validation, pricing, and preview purposes.
-- Multiple requests may be sent as the user modifies order data.
-- No payment objects are created at this stage.
-
----
-
-### 2. Order creation
-
-When the user selects a payment method and confirms the purchase, the frontend sends a request to:
-
-- `Papi::V3::OrdersController#create`
-
-Characteristics:
-- The order is persisted in the database.
-- The order transitions from a draft/prebuild state to a created state.
-- Further payment actions depend on the selected payment method.
-
----
-
-### 3. Payment initiation
-
-Available payment methods are determined by:
-
-- `Order#payment_methods`
-
-Based on the selected payment method, the frontend performs one of the following actions:
-
-- **Card payment**:
-  - Sends a request to:
-    - `Papi::V3::PaymentsController#pay_card`
-
-- **Non-card / redirect-based payment methods**:
-  - Sends a request to:
-    - `Papi::V3::PaymentsController#payment_params`
-  - The response typically contains a payment URL to which the user must be redirected.
-
----
-
-### 4. Payment creation and processors
-
-Payments are created via:
-
-- `PaymentBuilder`
-
-Responsibilities of `PaymentBuilder`:
-- Creates a `Payment` record.
-- Assigns a `processor` to the payment.
-
-The `processor`:
-- Is a string representing a Ruby constant name.
-- Points to a class responsible for interacting with a specific payment gateway API.
-- All payment processors are located in:
-  - `app/apis/payment_processor/`
-
-Each processor encapsulates:
-- API request building
-- Authentication
-- Gateway-specific logic
-
----
-
-### 5. Asynchronous payment callbacks
-
-Most payment gateways operate asynchronously.
-
-After payment actions (authorization, unfreeze, capture, refund), external providers send callbacks (webhooks) to the system.
-
-Callback handling:
-- Implemented in classes with the `_callback_processor` suffix.
-- Located in `app/apis/`
-- Example:
-  - `app/apis/alfa_pay_callback_processor.rb`
-
-Responsibilities of callback processors:
-- Validate incoming notifications.
-- Update payment and order states.
-- Trigger post-payment logic when applicable.
-
----
-
-### 6. Receipts and line items generation
-
-After successful payments or refunds:
-
-- Receipts are generated.
-- Line items are created and attached to receipts.
-
-Domain models:
-- `Receipt` — represents a fiscal receipt.
-- `LineItemV2` — represents individual product or service items within a receipt.
-
-Receipt generation logic:
-- Implemented in:
-  - `Receipts::Builder`
-
-Responsibilities of `Receipts::Builder`:
-- Create receipts for payments and refunds.
-- Generate corresponding `LineItemV2` records.
-- Ensure consistency between payments, receipts, and line items.
+For order/payment/callback/receipt flows, use:
+- `.docs/payments.md`
 
 ---
 
@@ -1059,7 +969,7 @@ Responsibilities of `Receipts::Builder`:
 | Anti-Pattern | Why | Alternative |
 |---|---|---|
 | Concern for logic | Magic, hard to trace | Inheritance or delegation |
-| String state | Type-unsafe | Enum |
+| String state without enum mapping | No predicates/scopes and easy to break | String-backed enum (`index_with(&:to_s)`) |
 | Fat models | Hard to maintain | Extract to namespaced services |
 | Fat controllers | Hard to test | Thin controller + model method or services |
 | Complex conditionals | Hard to read | Guard clauses |
