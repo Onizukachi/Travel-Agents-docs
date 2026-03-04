@@ -109,3 +109,53 @@ Responsibilities of `Receipts::Builder`:
 - Create receipts for payments and refunds.
 - Generate corresponding `LineItemV2` records.
 - Ensure consistency between payments, receipts, and line items.
+
+### 6.1 Advanced architecture: entry points and scenarios
+
+- **Auto detalization after trip**:
+  `Order#mark_got_back` -> `Order#create_receipts`
+  -> `Receipt.process_purchase_advanced_receipts(order, receipt_price, 'detailed')`
+  -> `Receipts::Builder#create`
+  -> `LineItemsV2::Advanced::Builder#build_detailed_line_items`.
+- **Detailed refund after detalization**:
+  `Payment#refund_detailed!` -> `Payment#mark_refunded!(..., params)` -> `Payment#create_advanced_receipts`
+  -> `Receipt.process_refund_advanced_receipts(payment, amount, 'detailed', params)`
+  -> `Receipts::Builder#create`
+  -> `LineItemsV2::Advanced::Builder#build_refund_line_items`.
+- **Manual fiscalization**:
+  `Admin::ManualFiscalizationController#fiscalize_receipts`
+  -> `LineItemsV2::Advanced::Builder.create_manual`.
+
+### 6.2 Licence line item (`LineItemV2::LICENCE_NAME`)
+
+- Licence line item can be built only in detailed flows:
+  - auto capture: `captured_licence_line_item`
+  - detailed refund: `refunded_licence_line_item`
+  - manual detailed: `manual_licence_line_item`
+- `LineItemsV2::Advanced::Creator#create_line_item!` skips creation when `price.zero?`.
+- For `subagent_wl` partner, licence is always `0` in calculator and therefore is not created.
+- For certificate orders, detailed flow builds only certificate/prepayment item (no licence).
+
+### 6.3 Detailed pricing rules (licence, tour, extras)
+
+- Main calculator: `LineItemsV2::Advanced::PriceCalculator`.
+- Detailed purchase amount source: `Order#receipt_price` (`captured_total + discount_price`).
+- Core formula:
+  `licence_price = amount - order_price - order_extras_price`, then apply remaining discount and clamp to `>= 0`.
+- `order_price` is based on operator payments for `service_type: 'order'` and already detailed order part.
+- `order_extras_price` is calculated only for `order.order_extras.active.non_split.without_priority_service`.
+- Domain rule:
+  non-split extras are separate detailed line items; other extras are treated as part of the tour price
+  (they are included in operator payments and must not be subtracted again as separate extras).
+- Discount distribution in calculator keeps each detailed tour/extra line item at least `1` (`MIN_LINE_ITEM_PRICE`),
+  so with large discounts licence may become `0`.
+
+### 6.4 Refund assumptions and fragile points
+
+- Before first detalization, expected invariant:
+  `payment.calculated_refunded_amount == order.line_items_v2.where(payment_type: LineItemV2::REFUND_TYPES).sum(&:price)`.
+- In detailed refund, params keys are expected to be always present:
+  `refund_tour_amount`, `refund_licence_amount`, `refund_extras` (`0` values are valid).
+- `LineItemsV2::Advanced::Builder#refund?` currently uses an aggregate comparison
+  (`existing refund line items` vs `payments.calculated_refunded_amount`) and is known fragile.
+  Treat this as legacy behaviour and prefer explicit mode selection in future refactors.
