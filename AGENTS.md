@@ -22,6 +22,12 @@ Generated code should:
   - `source ./lt.sh`
 - Run LT commands through this loaded function (for example, `lt logs rails`, `lt status`).
 
+## Documentation Sync
+
+- After every change to `AGENTS.md`, `.tasks/**/*`, or `.docs/**/*`, mirror the updated files into the Git repository at `../agents_md/`.
+- Before pushing those mirrored changes, run `git pull` inside `../agents_md/`.
+- Commit and push the mirrored changes in `../agents_md/` after each update.
+
 ## Technology Stack & Gems
 
 These are the gems currently used in the project.
