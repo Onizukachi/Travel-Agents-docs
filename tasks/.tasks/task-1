@@ -1,69 +1,389 @@
-# Задача: Поддержка новой организации Organization::AK в чеках и LineItemV2
+# Интеграция Vanta POS-кредитования: обработка webhook и cooling без PaymentCredit
 
-## 1. Бизнес контекст для задачи
-- В системе запускается новое юрлицо `Organization::AK` для новых заказов.
-- Формирование чеков и товарных позиций должно зависеть от организации заказа, а не от хардкодов `Organization::LT`.
-- Для новой организации лицензия в чеках должна отсутствовать, при этом тур и допуслуги должны считаться как прежде.
-- Старые заказы на legacy-организациях должны продолжать работать по старому флоу без регрессий.
+## Бизнес-контекст
 
-## 2. Ключевые решения и обоснования
-- Вводим явный флаг на уровне `Organization`, управляющий наличием лицензии в детализации чеков.
-  Это убирает хардкод `Organization::LT` и переносит бизнес-правило в данные.
-- Семантика флага: `true` = лицензия должна присутствовать в чеках (где применимо), `false` = лицензии нет всегда.
-- Значение по умолчанию для нового поля: `true`.
-  После выката миграции новая организация `AK` будет вручную переключена в `false` через админку.
-- Источник организации для чеков/товарных позиций — `order.organization_id`.
-  Это автоматически сохраняет backward compatibility: старые заказы остаются на старой организации и идут по старому флоу.
-- Логику включения/исключения лицензии централизуем в advanced flow (`LineItemsV2::Advanced::*`),
-  чтобы одинаково работали автодетализация, detailed refund и manual fiscalization.
-- `assign_org` переводим на новую организацию по умолчанию для новых заказов.
-  Это переключает только новый поток, не трогая старые записи.
-- UI/вспомогательные билдеры (например выбор доступных line items) должны учитывать флаг организации,
-  чтобы лицензия не предлагалась там, где она запрещена.
+Нужно завершить серверную часть интеграции Vanta POS-кредитования для текущей платежной модели проекта.
 
-## 3. Структурированный список задач
+Ключевое ограничение задачи:
+- новую сущность кредита не вводим;
+- используем существующий `Payment`;
+- все события от Vanta обрабатываем через webhook;
+- до финального статуса только логируем и сохраняем контекст;
+- только `blank.payed` должен приводить к фактической оплате заказа;
+- `blank.cooled` должен временно скрывать долг клиента через existing-механику `cooling` и `frozen_amount`.
 
-- [x] Шаг 1: Зафиксировать технический контракт нового флага в `organizations` (поле `has_license`, `true` = лицензия есть в чеке) и все места его использования.
-- [x] Шаг 2: Добавить миграцию в `organizations` с новым boolean-полем и `default: true` (backward compatible для текущих организаций).
-- [x] Шаг 3: Обновить `Order#assign_org`, чтобы новые заказы по умолчанию получали `Organization::AK`.
-- [x] Шаг 4: Убрать хардкод `Organization::LT` из создания `Receipt` в advanced flow (`Receipts::Builder`, manual fiscalization), брать организацию из заказа.
-- [x] Шаг 5: Убрать хардкод `seller_id: Organization::LT` из создания `LineItemV2` (advanced creator), брать `seller_id` из `order.organization_id`.
-- [x] Шаг 6: Добавить условие “лицензия разрешена для организации” в создание line items:
-  автодетализация (`captured_licence_line_item`), detailed refund (`refunded_licence_line_item`), manual (`manual_licence_line_item`).
-- [x] Шаг 7: Обновить `LineItemsV2::PossibleItemsBuilder` и связанные места UI/серилизации, чтобы для организаций без лицензии она не предлагалась и не участвовала в суммах.
-- [x] Шаг 8: Скрыть поле лицензии в UI ручной фискализации для организаций с флагом `false`.
-- [x] Шаг 9: Добавить/обновить RSpec:
-  сценарии для AK (без лицензии), сценарии для LT (со старой лицензией), проверка `organization_id` в `Receipt` и `seller_id` в `LineItemV2`.
-- [x] Шаг 10: Прогнать целевые спеки по чекам/line items, исправить регрессии и зафиксировать ограничения.
-- [x] Шаг 11: Обновить `.docs/payments.md` кратким блоком про организационно-зависимое поведение (AK без лицензии, legacy LT с лицензией).
+Целевой пользовательский сценарий:
+1. Клиент уходит в виджет Vanta.
+2. Vanta шлет промежуточные статусы заявки.
+3. Если пришел `blank.cooled`, мы узнаем `coolingExpiresAt` через SOAP, ставим платеж в охлаждение и показываем заказ как без долга.
+4. После этого либо приходит `blank.payed` и мы финализируем оплату, либо клиент/банк отменяет заявку и мы снимаем охлаждение без оплаты заказа.
 
-## 4. Заметки для восстановления сессии
+## Текущее состояние проекта
 
-### Текущее состояние проекта и выполненная работа
-- Изучен текущий advanced флоу чеков/line items:
-  `Receipts::Builder` -> `LineItemsV2::Advanced::Builder` -> `Creator`.
-- Выявлены ключевые сценарии:
-  - детализация после `Order#mark_got_back`;
-  - detailed refund через `Payment#refund_detailed!`;
-  - ручная фискализация через `Admin::ManualFiscalizationController`.
-- Документация по текущему поведению вынесена в `.docs/payments.md` (раздел 6.1–6.4).
-- `AGENTS.md` очищен от подробного блока по чекам, оставлена только ссылка на `.docs/payments.md`.
+### Уже есть
 
-### Критически важные принятые решения
-- Новый функционал должен зависеть от организации заказа, а не от глобальных констант LT в билдере.
-- Старые заказы (созданные до релиза) должны оставаться в старом режиме за счет уже сохраненного `organization_id`.
-- Для AK лицензия не должна создаваться ни в одном detailed-сценарии.
-- Нужно избежать “скрытых” источников лицензии: авто-билдер, refund-билдер, manual-билдер, список доступных позиций в UI.
-- Для новой boolean-колонки в `organizations` используется `default: true`;
-  перед релизом у `AK` вручную выставляется `false` через админку.
-- В UI ручной фискализации поле суммы лицензии должно скрываться для организаций без лицензии.
-- `seller_id` в `LineItemV2` должен выставляться из организации заказа.
+- Входной endpoint: `/payment/notify_vanta` в [`app/controllers/vanta_notifications_controller.rb`](/home/hikaru/projects/work/leveltravel/app/controllers/vanta_notifications_controller.rb)
+- Пустой обработчик [`app/apis/vanta_callback_processor.rb`](/home/hikaru/projects/work/leveltravel/app/apis/vanta_callback_processor.rb)
+- Создание ссылки на виджет через [`app/apis/payment_processor/vanta.rb`](/home/hikaru/projects/work/leveltravel/app/apis/payment_processor/vanta.rb) и [`app/apis/payment_processor/vanta_endpoints/pay_link.rb`](/home/hikaru/projects/work/leveltravel/app/apis/payment_processor/vanta_endpoints/pay_link.rb)
+- Готовая инфраструктура платежа:
+  - `payment.mark_authorized!`
+  - `payment.mark_captured!(amount)`
+  - `payment.update_cooling(expires_at)`
+  - `payment.reset_cooling`
+  - `payment.frozen?`
+  - `payment.cooling?`
 
-### Точка продолжения при прерывании
-- Начать с шага 1: выбрать и зафиксировать точное имя нового boolean-поля организации.
-- Затем последовательно выполнить шаги 2–6 (данные + core builders),
-  после чего шаги 7–11 (UI/serializers/tests/docs).
-- Перед внесением кода проверить текущие изменения в рабочем дереве (`app/models/organization.rb` уже изменен вне этой задачи).
+### Технический долг, который надо убрать в рамках задачи
 
-### Открытые вопросы (нужно закрыть перед кодом)
-- Открытых вопросов нет. Имя поля утверждено: `has_license`.
+- В [`app/controllers/vanta_notifications_controller.rb`](/home/hikaru/projects/work/leveltravel/app/controllers/vanta_notifications_controller.rb) есть `binding.pry`
+- В [`app/apis/vanta_callback_processor.rb`](/home/hikaru/projects/work/leveltravel/app/apis/vanta_callback_processor.rb) есть `binding.pry`
+- На Vanta сейчас нет тестов ни на контроллер, ни на процессор
+- Контроллер ожидает результат с `success?`, а сам процессор пока ничего не возвращает
+
+### Важное ограничение по текущему коду
+
+Сейчас `Payment::CREDIT_PROCESSORS` включает только `TBankCredit`, поэтому Vanta не должен идти через `payment_credit` и через `capture_t_bank_credit`. Для Vanta нужно использовать обычный жизненный цикл `Payment`: `mark_authorized!` -> `mark_captured!`.
+
+## Подтвержденные факты из документации
+
+### Webhook API
+
+Base URL подписок:
+- `https://api.b2pos.ru/webhooks/?method={method}`
+
+Ожидаемый ответ на входящий webhook:
+- HTTP `200`
+- тело строго `OK`
+
+Если ответ не `200 OK` с телом `OK`, Vanta считает уведомление недоставленным и повторяет отправку до 15 раз по экспоненте.
+
+### События webhook
+
+Подтвержденные события из PDF:
+- `blank.new`
+- `blank.wait_for_decision`
+- `blank.approve`
+- `blank.rejected`
+- `blank.canceled`
+- `blank.auth_canceled`
+- `blank.error`
+- `blank.wait_for_auth`
+- `blank.cooled`
+- `blank.payed`
+
+### Семантика событий
+
+- До выбора банка по одной заявке могут приходить противоречащие статусы по разным банкам.
+- До `blank.payed` поля `bankId` и `bankName` фактически неинформативны.
+- Только `blank.payed` гарантированно содержит:
+  - выбранный банк
+  - `sum`
+- `sum` приходит в копейках.
+- Успешный жизненный цикл заявки заканчивается на `blank.payed`.
+
+### Формат webhook
+
+Полезные поля:
+- `event` — имя события
+- `creditId` — идентификатор анкеты; это же кандидат на `profileID` для SOAP-статуса
+- `orderId` — наш идентификатор заказа, который мы отправляем в виджет; у нас это `payment.order_payment_number`
+- `sum` — сумма к перечислению в копейках; meaningful только для `blank.payed`
+- `date` — дата перечисления
+- `clientJson` — клиентский payload из инициализации виджета
+- `bankId`, `bankName` — meaningful только на поздних этапах
+
+### SOAP статус заявки
+
+Из заметок по задаче и документации:
+- endpoint: `https://api.b2pos.ru/webhooks`
+- для запроса нужны `userID`, `userToken`, `profileID`
+- запрашивать статус по одной заявке нельзя чаще 1 раза в 30 секунд
+- в ответе нужно брать `coolingExpiresAt`
+- `decision = 8` соответствует охлаждению
+
+## Ключевые решения и обоснования
+
+### 1. Не создаем `PaymentCredit`, весь контекст живет в `Payment`
+
+Почему:
+- это прямое требование задачи;
+- для Vanta нам не нужен отдельный lifecycle кредитной сущности;
+- состояние оплаты уже выражается через поля `Payment` и `metadata`.
+
+Что хранить в `Payment`:
+- в `data`:
+  - последний webhook payload Vanta
+  - `credit_id`
+  - последний `event`
+  - `bank_id`
+  - `bank_name`
+  - `vanta_sum_kopecks`
+- в `metadata`:
+  - `cooling_expires_at`
+  - `vanta_status_checked_at`
+
+### 2. Все промежуточные события только логируем
+
+До `blank.payed` платеж не должен считаться оплаченным.
+
+Обрабатываем как информационные:
+- `blank.new`
+- `blank.wait_for_decision`
+- `blank.approve`
+- `blank.wait_for_auth`
+
+Отрицательные финализации без оплаты:
+- `blank.rejected`
+- `blank.canceled`
+- `blank.auth_canceled`
+- `blank.error`
+
+Если отрицательный статус приходит после `blank.cooled`, нужно:
+- снять `cooling`
+- разморозить платеж
+- закрыть текущую попытку без оплаты заказа
+
+### 3. `blank.cooled` = authorize локально + cooling через SOAP
+
+Требуемое поведение:
+- получить `coolingExpiresAt` через SOAP по `creditId/profileID`
+- записать cooling в `payment.metadata`
+- поставить
+  - `frozen_amount = payment.requested_amount`
+  - `frozen_at = Time.current`
+- не переводить заказ в `paid`
+
+Почему так:
+- пользователь не должен видеть долг;
+- у нас уже есть готовая модель охлаждения через `Payment::Coolable`;
+- это ровно повторяет желаемую семантику из задачи.
+
+Важно:
+- на `blank.cooled` нельзя делать capture;
+- cooling должен быть идемпотентным;
+- если webhook ретраится, повторная заморозка не должна ломать платеж.
+
+### 4. `blank.payed` = финализация без внешнего capture API
+
+Требуемая последовательность:
+1. Если платеж еще не заморожен, вызвать `payment.mark_authorized!`
+2. Если есть `cooling`, вызвать `payment.reset_cooling`
+3. Пометить платеж списанным через `payment.mark_captured!(payment.requested_amount)`
+4. Перевести заказ в `paid`, если `order.may_mark_paid?`
+5. Записать логи и payload Vanta
+
+Почему не `payment.capture!`:
+- у Vanta в текущей задаче нет реального server-side commit/capture API;
+- пользователь прямо зафиксировал: автосписаний не будет, нужно локально пройти состояния `frozen` -> `captured`.
+
+### 5. Сумму из `blank.payed` нужно валидировать до финализации
+
+Правило:
+- `params[:sum]` приходит в копейках
+- сравниваем `params[:sum].to_i` с `payment.requested_amount.to_i * 100`
+
+Если сумма не совпадает:
+- не финализируем платеж;
+- пишем явный лог расхождения;
+- считаем webhook обработанным технически, чтобы не зациклить бесполезные ретраи без ручного вмешательства.
+
+Причина:
+- mismatch не починится повторной доставкой webhook;
+- возвращать `400` на постоянное расхождение значит гарантированно получить шум из 15 повторов.
+
+### 6. Логи должны быть идемпотентны
+
+У Vanta есть ретраи и повторные события по банкам.
+
+Поэтому:
+- логируем событие в читаемом виде;
+- избегаем дублей по одинаковому тексту, как это сделано в `TBankCreditCallbackProcessor`.
+
+### 7. SOAP-клиент нужен отдельным небольшим классом
+
+Предпочтительный вариант размещения:
+- `app/apis/payment_processor/vanta_endpoints/status_selected_opty.rb`
+или
+- `app/apis/payment_processor/vanta/status_request.rb`
+
+Требования к нему:
+- Savon
+- явный timeout/error handling
+- нормализация ответа до простого hash
+- троттлинг не чаще раза в 30 секунд на один `creditId/profileID`
+
+Не надо:
+- делать большой service layer
+- тащить новую доменную сущность
+
+## Неопределенности, которые нужно закрыть во время реализации
+
+### 1. Несовпадение credentials для SOAP и текущего конфига
+
+Сейчас в коде есть:
+- `x_trade_id: 236212`
+- `token: 82adae...`
+
+В заметках задачи для SOAP указаны:
+- `userID: 375212`
+- `userToken: b32b80...`
+- `tradeID: 236212`
+
+Вывод:
+- webhook/widget token нельзя автоматически считать SOAP token;
+- до реализации SOAP нужно явно определить источник боевых credentials;
+- если это отдельные креды, их нужно добавить в `config/payment/processor*.yml` отдельными ключами, а не переиспользовать существующий `token`.
+
+### 2. Точное имя SOAP метода
+
+В заметках фигурирует `StatusSelectedOpty()`, а в примере тела запроса описаны `StatusOptyRequest/Response`.
+
+Перед кодом надо проверить:
+- реальное имя operation в WSDL/endpoint
+- правильную форму envelope/body
+- namespace
+
+### 3. Какой `result` брать из SOAP ответа
+
+В `StatusOptyResponse.results.result[]` может быть несколько банков.
+
+Правило на реализацию:
+- если webhook уже содержит валидный `bankId`, матчить по нему;
+- если банка еще нет, брать запись с `decision = 8` и `coolingExpiresAt`;
+- если найдено несколько кандидатов, логировать ambiguity и не ставить cooling молча.
+
+### 4. Что считать финальным отказом после cooling
+
+На этапе реализации принять правило:
+- `blank.rejected`
+- `blank.canceled`
+- `blank.auth_canceled`
+- `blank.error`
+
+для платежа в `cooling/frozen` означают:
+- `reset_cooling`
+- `frozen_amount = 0`
+- `frozen_at = nil`
+- `finished = true`
+
+Это соответствует бизнес-смыслу: заявка закрыта, оплаты не было.
+
+## Структурированный список задач
+
+- [ ] Шаг 1: Удалить `binding.pry` из [`app/controllers/vanta_notifications_controller.rb`](/home/hikaru/projects/work/leveltravel/app/controllers/vanta_notifications_controller.rb) и [`app/apis/vanta_callback_processor.rb`](/home/hikaru/projects/work/leveltravel/app/apis/vanta_callback_processor.rb)
+- [ ] Шаг 2: Привести `VantaNotificationsController` к корректному контракту webhook: `200 OK` + `OK` при успешной обработке, `400` только для действительно невалидного/необрабатываемого запроса
+- [ ] Шаг 3: Определить формат результата `VantaCallbackProcessor` и выбрать один стиль на весь flow: `Dry::Monads::Result` предпочтительнее, потому что контроллер уже ожидает `success?`
+- [ ] Шаг 4: В `VantaCallbackProcessor` ввести константы событий и единый диспетчер `case params[:event].to_s`
+- [ ] Шаг 5: Добавить нормализацию и сохранение webhook payload в `payment.data`, включая `creditId`, `event`, `bankId`, `bankName`, `sum`
+- [ ] Шаг 6: Реализовать идемпотентное логирование всех промежуточных событий без изменения состояния оплаты
+- [ ] Шаг 7: Реализовать обработку отрицательных статусов `blank.rejected`, `blank.canceled`, `blank.auth_canceled`, `blank.error`, включая сценарий выхода из cooling
+- [ ] Шаг 8: Добавить SOAP-клиент получения статуса заявки Vanta с Savon и явной нормализацией ответа
+- [ ] Шаг 9: Добавить троттлинг SOAP-запроса не чаще одного раза в 30 секунд на `creditId/profileID`
+- [ ] Шаг 10: Реализовать `blank.cooled`: запросить `coolingExpiresAt`, поставить `payment.update_cooling`, `frozen_amount`, `frozen_at`, записать лог старта охлаждения
+- [ ] Шаг 11: Реализовать `blank.payed`: проверить сумму, при необходимости авторизовать платеж, снять cooling, списать платеж через `mark_captured!`, отметить заказ оплаченным
+- [ ] Шаг 12: Добавить request/controller specs на `/payment/notify_vanta` для всех supported events
+- [ ] Шаг 13: Добавить unit/spec на `VantaCallbackProcessor`, включая идемпотентность и негативные ветки
+- [ ] Шаг 14: Добавить tests на `blank.cooled` с заглушкой SOAP-ответа и на `blank.payed` с суммой в копейках
+- [ ] Шаг 15: Проверить, что после `blank.cooled` клиент не видит долг, а после финального отказа долг возвращается
+
+## Точная карта поведения по событиям
+
+### `blank.new`
+
+- сохранить payload
+- записать лог о создании заявки
+- вернуть успех без изменения `Payment`
+
+### `blank.wait_for_decision`
+
+- сохранить payload
+- записать лог "ожидание решения"
+- вернуть успех
+
+### `blank.approve`
+
+- сохранить payload
+- записать лог "заявка одобрена банком"
+- не менять `Payment`
+
+### `blank.wait_for_auth`
+
+- сохранить payload
+- записать лог "ожидает авторизации"
+- не менять `Payment`
+
+### `blank.cooled`
+
+- сохранить payload
+- получить статус по SOAP
+- найти `coolingExpiresAt`
+- если `coolingExpiresAt` найден:
+  - `payment.update_cooling(cooling_expires_at)`
+  - `payment.update_columns(frozen_amount: payment.requested_amount, frozen_at: Time.current)`
+  - записать лог старта охлаждения
+- если `coolingExpiresAt` не найден:
+  - записать error log
+  - не финализировать платеж
+
+### `blank.payed`
+
+- сохранить payload
+- провалидировать `sum`
+- если платеж еще не frozen, вызвать `payment.mark_authorized!`
+- снять cooling
+- `payment.mark_captured!(payment.requested_amount)`
+- если `order.may_mark_paid?`, перевести заказ в `paid`
+- записать лог успешной оплаты
+
+### `blank.rejected` / `blank.canceled` / `blank.auth_canceled` / `blank.error`
+
+- сохранить payload
+- записать лог отказа/отмены/ошибки
+- если платеж был в cooling/frozen:
+  - `payment.reset_cooling`
+  - `payment.update_columns(frozen_amount: 0, frozen_at: nil, finished: true)`
+- заказ не переводить в `paid`
+
+## Заметки для восстановления сессии
+
+### Что уже изучено
+
+- PDF `Webhooks_Партнерское_API_Документация_POS_API_Confluence (2).pdf`
+- текущий `task-1.md`
+- `VantaCallbackProcessor`
+- `VantaNotificationsController`
+- похожие реализации:
+  - `YandexSplitCallbackProcessor`
+  - `TBankCreditCallbackProcessor`
+  - `YandexSplitCoolingCheckerWorker`
+
+### Самые важные принятые решения
+
+- Vanta делаем без `PaymentCredit`
+- до `blank.payed` только логируем
+- `blank.cooled` реализуем через существующий `Payment::Coolable`
+- `blank.payed` локально делает `authorized -> captured -> order paid`
+- сумму из webhook валидируем в копейках
+- mismatch суммы не должен запускать бесконечные ретраи
+
+### С чего продолжать в следующей сессии
+
+1. Удалить `binding.pry`
+2. Определить контракт результата процессора и поправить контроллер
+3. Добавить event constants и logging skeleton
+4. Поднять SOAP client spike и подтвердить реальные credentials/method name
+5. После подтверждения SOAP завершить `blank.cooled`
+6. Потом закрыть `blank.payed` и тесты
+
+### Файлы, которые точно понадобятся
+
+- [`app/apis/vanta_callback_processor.rb`](/home/hikaru/projects/work/leveltravel/app/apis/vanta_callback_processor.rb)
+- [`app/controllers/vanta_notifications_controller.rb`](/home/hikaru/projects/work/leveltravel/app/controllers/vanta_notifications_controller.rb)
+- [`app/apis/payment_processor/vanta.rb`](/home/hikaru/projects/work/leveltravel/app/apis/payment_processor/vanta.rb)
+- [`app/apis/payment_processor/vanta_endpoints/pay_link.rb`](/home/hikaru/projects/work/leveltravel/app/apis/payment_processor/vanta_endpoints/pay_link.rb)
+- [`app/models/payment.rb`](/home/hikaru/projects/work/leveltravel/app/models/payment.rb)
+- [`app/models/concerns/payment/coolable.rb`](/home/hikaru/projects/work/leveltravel/app/models/concerns/payment/coolable.rb)
+- [`app/apis/yandex_split_callback_processor.rb`](/home/hikaru/projects/work/leveltravel/app/apis/yandex_split_callback_processor.rb)
+- [`app/apis/t_bank_credit_callback_processor.rb`](/home/hikaru/projects/work/leveltravel/app/apis/t_bank_credit_callback_processor.rb)
+- [`app/workers/yandex_split_cooling_checker_worker.rb`](/home/hikaru/projects/work/leveltravel/app/workers/yandex_split_cooling_checker_worker.rb)
+
