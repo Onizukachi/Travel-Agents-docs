@@ -1,0 +1,184 @@
+# Управление Vanta webhook-подписками через процессор и ActiveAdmin
+
+## Бизнес-контекст
+
+Для интеграции Vanta нужен не только прием callback-уведомлений, но и управление самими webhook-подписками на стороне партнера.
+
+Нужно реализовать:
+- клиентские методы Vanta Webhooks API:
+  - `create`
+  - `remove`
+  - `getList`
+- небольшую админку для ручного управления подписками:
+  - просмотр текущих подписок в формате `event` + `url`
+  - удаление существующей подписки
+  - добавление новой подписки
+  - выбор `event` только из списка поддерживаемых событий Vanta
+
+Ограничения:
+- реализуем именно в Vanta processor / Vanta endpoint modules;
+- без новой отдельной доменной модели в БД;
+- админка работает поверх live API Vanta, а не через локальное хранение.
+
+## Ключевые решения и обоснования
+
+### 1. Методы webhook API живут рядом с Vanta processor
+
+Предпочтительное размещение:
+- `app/apis/payment_processor/vanta_endpoints/webhooks.rb`
+или отдельные small modules:
+  - `create_webhook.rb`
+  - `remove_webhook.rb`
+  - `webhook_list.rb`
+
+Причина:
+- пользователь явно попросил реализовать это "в процессоре";
+- текущий `PaymentProcessor::Vanta` уже является точкой входа для интеграции Vanta;
+- это удерживает всю интеграцию Vanta в одном namespace.
+
+### 2. Для webhook management не нужен реальный Payment
+
+Эти вызовы операционно относятся к интеграции партнера, а не к конкретному платежу.
+
+Поэтому:
+- методы подписок делаем class-level или через отдельный helper внутри `PaymentProcessor::Vanta`;
+- конфиг берем напрямую из `Acquiring.find_by(processor: 'Vanta')` или из file config;
+- не требуем существующего `Payment` для `create/remove/getList`.
+
+### 3. Поддерживаем только `create`, `remove`, `getList`
+
+Документация содержит еще `createFew`, но в этой задаче пользователь запросил именно:
+- `create`
+- `remove`
+- `getList`
+
+Следовательно:
+- `createFew` пока не реализуем;
+- список возможных событий задаем константой в коде из документации.
+
+### 4. Список событий фиксируем константой
+
+Поддерживаемые события:
+- `blank.new`
+- `blank.wait_for_decision`
+- `blank.approve`
+- `blank.rejected`
+- `blank.canceled`
+- `blank.auth_canceled`
+- `blank.error`
+- `blank.wait_for_auth`
+- `blank.cooled`
+- `blank.payed`
+
+Причина:
+- пользователь хочет выбирать `event` только из допустимого списка;
+- нет необходимости хранить их в БД;
+- константа упрощает валидацию в админке и в клиенте.
+
+### 5. Админка должна работать как thin UI над live API
+
+На index странице:
+- таблица текущих подписок (`id`, `event`, `url`)
+- форма добавления новой подписки
+- action удаления для существующей записи
+
+Причина:
+- пользователь попросил минимальную админку;
+- отдельный resource/model не нужен;
+- `ActiveAdmin.register_page` подходит лучше всего.
+
+### 6. Ответы Vanta нужно нормализовать
+
+У API есть два типа ответов:
+- общий ответ с `code` / `message`
+- list response с `type: list` / `items`
+
+В клиенте нужно:
+- парсить JSON
+- на успешных ответах возвращать простой hash
+- на ошибках отдавать нормализованную структуру с `success: false`, `code`, `message`
+- использовать человекочитаемые flash-сообщения в админке
+
+### 7. Для add/remove в админке используем page_action
+
+Нужные actions:
+- `page_action :create_subscription, method: :post`
+- `page_action :remove_subscription, method: :post` или `:delete`
+
+Причина:
+- соответствует паттернам существующих ActiveAdmin tools pages;
+- не требует отдельного контроллера.
+
+### 8. Права доступа берем по существующему системному периметру
+
+Предположение на реализацию:
+- страница будет жить в меню `Система`
+- видимость страницы завязать на `current_user.has_role?(:admin_acquirings, :index)`
+
+Если позже понадобится отдельная роль, это можно вынести в отдельную задачу без ломки UI.
+
+## Структурированный список задач
+
+- [ ] Шаг 1: Зафиксировать в коде список поддерживаемых Vanta webhook events как константу
+- [ ] Шаг 2: Реализовать client method `get_list` для `https://api.b2pos.ru/webhooks/?method=getList`
+- [ ] Шаг 3: Реализовать client method `create_webhook(event:, url:)` для `.../?method=create`
+- [ ] Шаг 4: Реализовать client method `remove_webhook(id:)` для `.../?method=remove`
+- [ ] Шаг 5: Добавить общую нормализацию ответов и ошибок Vanta Webhooks API
+- [ ] Шаг 6: Сделать ActiveAdmin page для управления Vanta webhook-подписками
+- [ ] Шаг 7: На index странице вывести live list подписок `id / event / url`
+- [ ] Шаг 8: Добавить форму создания подписки с select по допустимым событиям и полем `url`
+- [ ] Шаг 9: Добавить action удаления подписки из таблицы
+- [ ] Шаг 10: Добавить flash messages для success/error сценариев create/remove/getList
+- [ ] Шаг 11: Добавить тесты на client methods Vanta webhook API
+- [ ] Шаг 12: По возможности добавить request/spec на page actions админки или минимум проверить их вручную
+
+## Заметки для восстановления сессии
+
+### Что уже изучено
+
+- PDF `Webhooks_Партнерское_API_Документация_POS_API_Confluence (2).pdf`, разделы:
+  - `create`
+  - `remove`
+  - `getList`
+- текущий [`app/apis/payment_processor/vanta.rb`](/home/hikaru/projects/work/leveltravel/app/apis/payment_processor/vanta.rb)
+- текущий [`app/apis/payment_processor/vanta_endpoints/pay_link.rb`](/home/hikaru/projects/work/leveltravel/app/apis/payment_processor/vanta_endpoints/pay_link.rb)
+- ActiveAdmin patterns:
+  - [`app/admin/payment_release.rb`](/home/hikaru/projects/work/leveltravel/app/admin/payment_release.rb)
+  - [`app/admin/receipt_tools.rb`](/home/hikaru/projects/work/leveltravel/app/admin/receipt_tools.rb)
+  - [`app/admin/footer_sections_upload.rb`](/home/hikaru/projects/work/leveltravel/app/admin/footer_sections_upload.rb)
+
+### Подтвержденные факты из документации
+
+- `create`
+  - POST form-data
+  - params: `token`, `event`, `url`
+- `remove`
+  - POST form-data
+  - params: `token`, `id`
+- `getList`
+  - POST form-data
+  - params: `token`
+  - success response:
+    - `type: "list"`
+    - `items: [{ id, event, url }]`
+
+### Важные принятые решения
+
+- `createFew` в этой задаче не делаем
+- live state подписок берем только из Vanta API через `getList`
+- в админке даем выбрать только разрешенные события из константы
+- отдельную БД-модель для подписок не вводим
+- для webhook management не используем `Payment`
+
+### Точка продолжения
+
+1. Вынести Vanta webhook methods в endpoint module
+2. Добавить class-level entry points в `PaymentProcessor::Vanta`
+3. После этого сделать ActiveAdmin page
+4. Затем добавить tests на client methods
+
+### Открытые допущения
+
+- Для доступа к странице используем существующее право `admin_acquirings:index`
+- Меню страницы располагаем под `Система`
+- Для удаления достаточно `id`, подтверждение делаем стандартным browser confirm
