@@ -113,12 +113,12 @@ Base URL подписок:
 
 Что хранить в `Payment`:
 - в `data`:
-  - последний webhook payload Vanta
+  - только данные финального успешного статуса `blank.payed`
   - `credit_id`
-  - последний `event`
   - `bank_id`
   - `bank_name`
   - `vanta_sum_kopecks`
+  - `vanta_paid_at`
 - в `metadata`:
   - `cooling_expires_at`
   - `vanta_status_checked_at`
@@ -282,7 +282,7 @@ Base URL подписок:
 - [ ] Шаг 2: Привести `VantaNotificationsController` к корректному контракту webhook: `200 OK` + `OK` при успешной обработке, `400` только для действительно невалидного/необрабатываемого запроса
 - [ ] Шаг 3: Определить формат результата `VantaCallbackProcessor` и выбрать один стиль на весь flow: `Dry::Monads::Result` предпочтительнее, потому что контроллер уже ожидает `success?`
 - [ ] Шаг 4: В `VantaCallbackProcessor` ввести константы событий и единый диспетчер `case params[:event].to_s`
-- [ ] Шаг 5: Добавить нормализацию и сохранение webhook payload в `payment.data`, включая `creditId`, `event`, `bankId`, `bankName`, `sum`
+- [ ] Шаг 5: Добавить нормализацию входящих Vanta params и сохранить в `payment.data` только финальные поля `blank.payed`: `creditId`, `bankId`, `bankName`, `sum`, `date`
 - [ ] Шаг 6: Реализовать идемпотентное логирование всех промежуточных событий без изменения состояния оплаты
 - [ ] Шаг 7: Реализовать обработку отрицательных статусов `blank.rejected`, `blank.canceled`, `blank.auth_canceled`, `blank.error`, включая сценарий выхода из cooling
 - [ ] Шаг 8: Добавить SOAP-клиент получения статуса заявки Vanta с Savon и явной нормализацией ответа
@@ -298,31 +298,26 @@ Base URL подписок:
 
 ### `blank.new`
 
-- сохранить payload
 - записать лог о создании заявки
 - вернуть успех без изменения `Payment`
 
 ### `blank.wait_for_decision`
 
-- сохранить payload
 - записать лог "ожидание решения"
 - вернуть успех
 
 ### `blank.approve`
 
-- сохранить payload
 - записать лог "заявка одобрена банком"
 - не менять `Payment`
 
 ### `blank.wait_for_auth`
 
-- сохранить payload
 - записать лог "ожидает авторизации"
 - не менять `Payment`
 
 ### `blank.cooled`
 
-- сохранить payload
 - получить статус по SOAP
 - найти `coolingExpiresAt`
 - если `coolingExpiresAt` найден:
@@ -335,7 +330,12 @@ Base URL подписок:
 
 ### `blank.payed`
 
-- сохранить payload
+- сохранить в `payment.data` только:
+  - `credit_id`
+  - `bank_id`
+  - `bank_name`
+  - `vanta_sum_kopecks`
+  - `vanta_paid_at`
 - провалидировать `sum`
 - если платеж еще не frozen, вызвать `payment.mark_authorized!`
 - снять cooling
@@ -345,7 +345,6 @@ Base URL подписок:
 
 ### `blank.rejected` / `blank.canceled` / `blank.auth_canceled` / `blank.error`
 
-- сохранить payload
 - записать лог отказа/отмены/ошибки
 - если платеж был в cooling/frozen:
   - `payment.reset_cooling`
@@ -369,6 +368,8 @@ Base URL подписок:
 
 - Vanta делаем без `PaymentCredit`
 - до `blank.payed` только логируем
+- каждый webhook payload в `payment.data` не сохраняем
+- в `payment.data` пишем только финальные данные `blank.payed`: `credit_id`, банк, сумма, дата
 - `blank.cooled` реализуем через существующий `Payment::Coolable`
 - SOAP статус для cooling получаем по `orderID`, а не по `profileID`
 - `blank.payed` локально делает `authorized -> captured -> order paid`
