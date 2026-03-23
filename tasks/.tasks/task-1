@@ -96,7 +96,8 @@ Base URL подписок:
 
 Из заметок по задаче и документации:
 - endpoint: `https://api.b2pos.ru/webhooks`
-- для запроса нужны `userID`, `userToken`, `profileID`
+- для запроса нужны `userID`, `userToken` и `orderID` либо `profileID`
+- в нашей реализации используем `orderID`, а не `profileID`
 - запрашивать статус по одной заявке нельзя чаще 1 раза в 30 секунд
 - в ответе нужно брать `coolingExpiresAt`
 - `decision = 8` соответствует охлаждению
@@ -146,7 +147,7 @@ Base URL подписок:
 ### 3. `blank.cooled` = authorize локально + cooling через SOAP
 
 Требуемое поведение:
-- получить `coolingExpiresAt` через SOAP по `creditId/profileID`
+- получить `coolingExpiresAt` через SOAP по `orderID`
 - записать cooling в `payment.metadata`
 - поставить
   - `frozen_amount = payment.requested_amount`
@@ -210,7 +211,10 @@ Base URL подписок:
 - Savon
 - явный timeout/error handling
 - нормализация ответа до простого hash
-- троттлинг не чаще раза в 30 секунд на один `creditId/profileID`
+- SOAP operation: `StatusSelectedOpty`
+- request root: `StatusSelectedOptyRequest`
+- response root: `StatusSelectedOptyResponse`
+- троттлинг не чаще раза в 30 секунд на один `orderID`
 
 Не надо:
 - делать большой service layer
@@ -236,21 +240,25 @@ Base URL подписок:
 
 ### 2. Точное имя SOAP метода
 
-В заметках фигурирует `StatusSelectedOpty()`, а в примере тела запроса описаны `StatusOptyRequest/Response`.
+Используем `StatusSelectedOpty`.
 
 Перед кодом надо проверить:
-- реальное имя operation в WSDL/endpoint
-- правильную форму envelope/body
+- точное имя operation в Savon client
+- правильную форму envelope/body для `StatusSelectedOptyRequest`
 - namespace
 
 ### 3. Какой `result` брать из SOAP ответа
 
-В `StatusOptyResponse.results.result[]` может быть несколько банков.
+Для текущей задачи основной метод получения статуса заявки — `StatusSelectedOpty` по `orderID`.
 
-Правило на реализацию:
-- если webhook уже содержит валидный `bankId`, матчить по нему;
-- если банка еще нет, брать запись с `decision = 8` и `coolingExpiresAt`;
-- если найдено несколько кандидатов, логировать ambiguity и не ставить cooling молча.
+Ожидаем один агрегированный ответ по заявке, в котором нас интересуют:
+- `status`
+- `coolingExpiresAt`
+- `bank`
+- `bankName`
+- `amount`
+
+Если ответ не содержит `coolingExpiresAt` при `status = 8`, это считаем ошибкой интеграции и логируем явно.
 
 ### 4. Что считать финальным отказом после cooling
 
@@ -278,8 +286,8 @@ Base URL подписок:
 - [ ] Шаг 6: Реализовать идемпотентное логирование всех промежуточных событий без изменения состояния оплаты
 - [ ] Шаг 7: Реализовать обработку отрицательных статусов `blank.rejected`, `blank.canceled`, `blank.auth_canceled`, `blank.error`, включая сценарий выхода из cooling
 - [ ] Шаг 8: Добавить SOAP-клиент получения статуса заявки Vanta с Savon и явной нормализацией ответа
-- [ ] Шаг 9: Добавить троттлинг SOAP-запроса не чаще одного раза в 30 секунд на `creditId/profileID`
-- [ ] Шаг 10: Реализовать `blank.cooled`: запросить `coolingExpiresAt`, поставить `payment.update_cooling`, `frozen_amount`, `frozen_at`, записать лог старта охлаждения
+- [ ] Шаг 9: Добавить троттлинг SOAP-запроса не чаще одного раза в 30 секунд на `orderID`
+- [ ] Шаг 10: Реализовать `blank.cooled`: запросить `coolingExpiresAt` через `StatusSelectedOpty` по `orderID`, поставить `payment.update_cooling`, `frozen_amount`, `frozen_at`, записать лог старта охлаждения
 - [ ] Шаг 11: Реализовать `blank.payed`: проверить сумму, при необходимости авторизовать платеж, снять cooling, списать платеж через `mark_captured!`, отметить заказ оплаченным
 - [ ] Шаг 12: Добавить request/controller specs на `/payment/notify_vanta` для всех supported events
 - [ ] Шаг 13: Добавить unit/spec на `VantaCallbackProcessor`, включая идемпотентность и негативные ветки
@@ -362,6 +370,7 @@ Base URL подписок:
 - Vanta делаем без `PaymentCredit`
 - до `blank.payed` только логируем
 - `blank.cooled` реализуем через существующий `Payment::Coolable`
+- SOAP статус для cooling получаем по `orderID`, а не по `profileID`
 - `blank.payed` локально делает `authorized -> captured -> order paid`
 - сумму из webhook валидируем в копейках
 - mismatch суммы не должен запускать бесконечные ретраи
@@ -386,4 +395,3 @@ Base URL подписок:
 - [`app/apis/yandex_split_callback_processor.rb`](/home/hikaru/projects/work/leveltravel/app/apis/yandex_split_callback_processor.rb)
 - [`app/apis/t_bank_credit_callback_processor.rb`](/home/hikaru/projects/work/leveltravel/app/apis/t_bank_credit_callback_processor.rb)
 - [`app/workers/yandex_split_cooling_checker_worker.rb`](/home/hikaru/projects/work/leveltravel/app/workers/yandex_split_cooling_checker_worker.rb)
-
