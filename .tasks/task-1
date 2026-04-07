@@ -1,0 +1,51 @@
+# Задача: «Тонкая» модель coupons и перенос шаблонных данных в promo_campaign
+
+## 1. Бизнес контекст для задачи
+- В домене проекта `promo_campaign` должна быть единственным шаблоном купона/сертификата: номинал, тип скидки, ограничения, срок действия, контент и метаданные живут в кампании.
+- Экземпляр `coupon` должен хранить только состояние конкретного пина: `pin`, `uses_left`, связи (`promo_campaign_id`, `certificate_id`, `manager_id`).
+- Текущая реализация смешивает шаблон и состояние: в таблице `coupons` дублируются поля кампании (`value`, `relative`, `max_value`, `conditions`, `expires_at`, `title`, `description`, `personal_uses_limit`, `prepaid`, `is_generated` и др.).
+- Это повышает стоимость изменений и риск рассинхронизации данных между купоном и кампанией.
+
+## 2. Ключевые решения и обоснования
+- Решение 1: `promo_campaign` — единственный источник неизменяемых правил и параметров скидки.
+  Обоснование: уже сейчас `Coupons::CouponChecker` читает `conditions` и `archived?` через `coupon.promo_campaign`, а генератор кампаний копирует эти данные в купон только из-за исторической схемы.
+- Решение 2: `coupon` — пассивный носитель состояния экземпляра.
+  Обоснование: купон должен отвечать на вопросы «какой PIN», «сколько активаций осталось» и «к какой кампании/сертификату/менеджеру относится», но не дублировать бизнес-правила кампании.
+- Решение 3: миграция должна быть поэтапной с безопасным backfill перед удалением колонок.
+  Обоснование: в системе есть legacy-потоки (`CouponGroup`, `CouponMaker`, `CouponBulkCreator`, `PAPI V3 CouponsController`) которые создают купоны напрямую без `promo_campaign_id`.
+- Решение 4: сохранить обратную совместимость на переходный период через чтение параметров скидки из `promo_campaign` (или временный fallback).
+  Обоснование: текущая runtime-логика (`Order`, `Payment`, receipts, `Certificate`) активно использует `coupon.value/relative/max_value`.
+- Решение 5: после миграции обеспечить целостность БД.
+  Обоснование: для целевой модели нужны `NOT NULL`/индексы/внешние ключи минимум на `pin`, `uses_left`, `promo_campaign_id` (с оговоркой для legacy-данных на период миграции).
+
+## 3. Структурированный список задач
+- [ ] Шаг 1: Зафиксировать целевой контракт `Coupon` (атрибуты, ассоциации, публичные методы) и описать, какие поля становятся производными через `promo_campaign`.
+- [ ] Шаг 2: Провести аудит всех мест чтения/записи «толстых» полей купона в runtime-коде (`app/models/order.rb`, `app/models/payment.rb`, receipts, `Certificate`, admin-страницы, сервисы).
+- [ ] Шаг 3: Разделить потоки генерации купонов на два класса: кампании (`PromoCampaigns::CouponCreator`) и legacy-ручные генераторы (`CouponGroup`, `CouponMaker`, `PAPI`) с выбранной стратегией миграции.
+- [ ] Шаг 4: Подготовить миграционный план данных: backfill `promo_campaign_id` для исторических купонов или создание служебных кампаний для legacy-купонов.
+- [ ] Шаг 5: Перенести бизнес-логику чтения шаблонных полей на `coupon.promo_campaign` в критичных местах расчёта скидки/платежей/фискализации.
+- [ ] Шаг 6: Обновить валидации/колбэки `Coupon` и `PromoCampaign`, удалив логику синхронизации дублируемых полей (`sync_coupon_personal_uses_limit` и частично `recalculate_coupons_uses_left` в части нецелевых атрибутов).
+- [ ] Шаг 7: Изменить админские формы и представления (`app/admin/coupons.rb`, `app/views/admin/check_coupon/_coupon_info.arb`), чтобы шаблонные данные отображались из `promo_campaign`, а не редактировались на `coupon`.
+- [ ] Шаг 8: Подготовить и применить миграции БД для «утончения» `coupons`: удалить нецелевые колонки, оставить только требуемые + служебные timestamps.
+- [ ] Шаг 9: Обновить фабрики и тесты (`spec/factories/coupon.rb`, worker/service specs), убрать ожидания копирования шаблонных полей в купон.
+- [ ] Шаг 10: Прогнать релевантные тесты (`promo_campaign`, `coupon_checker`, `order/payment/receipts`, admin flows), зафиксировать регрессии и закрыть их.
+
+## 4. Заметки для восстановления сессии
+- Текущее состояние проекта:
+  - `promo_campaign` уже содержит полный набор шаблонных полей (`value`, `relative`, `max_value`, `uses`, `personal_uses`, `expires_at`, `title`, `description`, `conditions`, `campaign_type`, `custom_pin`).
+  - `PromoCampaigns::CouponCreator` при генерации копирует эти поля в `coupons`.
+  - `coupons` таблица сейчас «толстая»: хранит все шаблонные поля + состояние экземпляра.
+  - `Coupons::CouponChecker` валидирует по `coupon.promo_campaign.conditions` и `coupon.promo_campaign.archived?`.
+  - Есть legacy-потоки прямого создания купонов без `promo_campaign_id`: `Admin::CouponMakerController`, `CouponGroup`/`CouponGenerator`, `CouponBulkCreator`, `Papi::V3::CouponsController`.
+- Уже выполненная работа в рамках исследования:
+  - Проанализированы ключевые модели/concerns (`PromoCampaign`, `Coupon`, `Coupons::*`).
+  - Проанализированы генерация и lifecycle (`PromoCampaigns::CouponCreator`, `PromoCampaigns::CouponGeneratorWorker`, `PromoCampaignOperation`, cleanup worker).
+  - Найдены критичные интеграции по скидкам и фискализации (`Order`, `Payment`, receipts, `AppliedCertificate`, `Certificate`).
+  - Проверены админские интерфейсы (`promo_campaigns`, `coupons`, `check_coupon`, `score_transfer`).
+- Критически важные принятые решения:
+  - Целевую схему строим вокруг `promo_campaign` как единого шаблона.
+  - Удаление «толстых» колонок из `coupons` делаем только после миграции legacy-потоков и backfill.
+  - Точки риска: сертификаты, чеки Uniteller/OFD, ручные купоны из админки и PAPI.
+- Точка продолжения при обрыве сессии:
+  - Начать с согласования открытых вопросов по scope (legacy-потоки и стратегия backfill).
+  - После согласования перейти к Шагу 1 и Шагу 2 из списка задач, затем подготовить миграционный PR по этапам (код -> backfill -> ограничения БД -> удаление колонок).
