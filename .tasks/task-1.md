@@ -27,24 +27,24 @@
 - Физические колонки и таблицы legacy остаются в БД как «мертвые» до отдельного релизного окна с миграциями.
 
 ## 4. Подробный план реализации (один PR)
-- [ ] Шаг 1: Зафиксировать финальный контракт `Coupon` и список legacy-колонок для `ignored_columns`.
-- [ ] Шаг 2: Переписать `app/models/coupon.rb` с явной структурой (ассоциации, валидации, enum/state-методы, делегаты к `promo_campaign`, состояние использования).
-- [ ] Шаг 3: Полностью объединить concerns `Coupons::Base/Relations/Validations/Callbacks` в `app/models/coupon.rb`, удалить concerns-файлы и оставить логику только в модели `Coupon` (частично: из concerns удалены `coupon_group`-связи и параметры).
+- [x] Шаг 1: Зафиксировать финальный контракт `Coupon` и список legacy-колонок для `ignored_columns`.
+- [x] Шаг 2: Переписать `app/models/coupon.rb` с явной структурой (ассоциации, валидации, enum/state-методы, делегаты к `promo_campaign`, состояние использования).
+- [x] Шаг 3: Полностью объединить concerns `Coupons::Base/Relations/Validations/Callbacks` в `app/models/coupon.rb`, удалить concerns-файлы и оставить логику только в модели `Coupon`.
 - [ ] Шаг 4: Перевести расчеты скидок и сертификатов на `promo_campaign`-источник (Order, Payment, receipts, serializers, AppliedCertificate, Certificate).
-- [ ] Шаг 5: Обновить `PromoCampaigns::CouponCreator`, чтобы в `Coupon` писались только целевые поля.
+- [x] Шаг 5: Обновить `PromoCampaigns::CouponCreator`, чтобы в `Coupon` писались только целевые поля.
 - [x] Шаг 6: Удалить `CouponGroup` целиком: модель, контроллер, views, factory/spec, роуты, воркер `CouponGenerator`, mailer `CouponMailer`.
 - [x] Шаг 7: Удалить `CouponMaker` целиком: контроллер, view, routes, роль/меню-линки (роль/права в `lib/new_roles.json` и `lib/old_roles.json` не трогались по договоренности).
 - [x] Шаг 8: Удалить `CouponBulkCreator`, `CouponGenerationScheduler`, `CouponGenerationLog`, ActiveAdmin-ресурс логов и связанные упоминания (миграции/схема не трогались).
 - [x] Шаг 9: Удалить `Papi::V3::CouponsController` и маршруты `v3/coupons#create` + `v3/coupons/array_coupons`.
 - [x] Шаг 10: Удалить `CouponFactory` и все вызовы из удаляемых потоков.
 - [x] Шаг 11: Удалить `ArchivedCoupon` и все его runtime-упоминания (`Order#coupon` fallback, админка archived coupons, старые проверки).
-- [ ] Шаг 12: Обновить `Coupons::CouponChecker` и связанные сервисы так, чтобы условия/ограничения читались только из `promo_campaign`.
-- [ ] Шаг 13: Обновить админку `app/admin/coupons.rb` и `check_coupon` на отображение/работу только через `promo_campaign`-данные (частично: удалены `coupon_group`-колонки/ссылки/фильтры).
-- [ ] Шаг 14: Удалить фильтры/формы/параметры, завязанные на legacy-колонки (`value`, `relative`, `title`, `description`, `coupon_group_id`, и т.д.) (частично: удален `coupon_group_id`).
-- [ ] Шаг 15: Добавить rake-задачу `coupons:assert_promo_campaign_integrity` (падает, если найдены купоны без `promo_campaign_id`).
-- [ ] Шаг 16: Почистить `lib/tasks/coupons.rake` от legacy conversion-task'ов и оставить только актуальные проверки/утилиты (частично: убран `coupon_group_id: nil` фильтр).
-- [ ] Шаг 17: Удалить/обновить тесты legacy-модулей; добавить тесты на новый контракт `Coupon` и запрет обращения к ignored-полям (частично: удалены factory/spec для `CouponGroup`).
-- [ ] Шаг 18: Прогнать релевантные спеки: promo_campaign/coupon/order/payment/receipts/admin (частично: прогнаны `spec/models/certificate_spec.rb` и `spec/models/promo_campaign_spec.rb:484`).
+- [x] Шаг 12: Обновить `Coupons::CouponChecker` и связанные сервисы так, чтобы условия/ограничения читались только из `promo_campaign`.
+- [x] Шаг 13: Обновить админку `app/admin/coupons.rb` и `check_coupon` на отображение/работу только через `promo_campaign`-данные.
+- [x] Шаг 14: Удалить фильтры/формы/параметры, завязанные на legacy-колонки (`value`, `relative`, `title`, `description`, `coupon_group_id`, и т.д.).
+- [x] Шаг 15: Добавить rake-задачу `coupons:assert_promo_campaign_integrity` (падает, если найдены купоны без `promo_campaign_id`).
+- [x] Шаг 16: Почистить `lib/tasks/coupons.rake` от legacy conversion-task'ов и оставить только актуальные проверки/утилиты.
+- [ ] Шаг 17: Удалить/обновить тесты legacy-модулей; добавить тесты на новый контракт `Coupon` и запрет обращения к ignored-полям (частично: обновлены `spec/factories/coupon.rb` и `spec/support/shared_contexts/prepare_certificate_context.rb`).
+- [ ] Шаг 18: Прогнать релевантные спеки: promo_campaign/coupon/order/payment/receipts/admin (частично: прогнаны `spec/models/certificate_spec.rb`, `spec/services/coupons/coupon_checker_spec.rb`, `spec/workers/promo_campaigns/coupon_generator_worker_spec.rb`, `spec/mindbox/state_processor_spec.rb`, `spec/services/line_items_v2/advanced/builder_full_prepayment_cases_spec.rb`, `spec/apis/payments/uniteller_spec.rb:217`, `spec/apis/payments/uniteller_spec.rb:248`, `spec/models/order_spec.rb:404`, `spec/models/order_spec.rb:405`).
 - [ ] Шаг 19: Проверить маршруты и админ-UI после удаления legacy entrypoints (частично: удаленные маршруты проверены через `rails routes`).
 - [ ] Шаг 20: Подготовить release notes для выката (новые отключенные endpoint'ы и runbook по rake-check).
 
@@ -84,6 +84,6 @@
 - Основной технический риск: скрытые обращения к legacy-колонкам `coupons` в редких потоках.
   Стратегия: `ignored_columns` + полный grep-аудит + целевые спеки.
 - Точка продолжения:
-  - завершить Шаги 1-5 (включая полную консолидацию concern-логики в `Coupon` и удаление concerns),
-  - закрыть Шаги 12-14 (CouponChecker + финальная чистка админки/форм/фильтров),
-  - доделать Шаги 15-20 (integrity rake-check, зачистка `lib/tasks/coupons.rake`, тесты, release notes).
+  - завершить Шаг 4 (перенос на `promo_campaign` без legacy-колонок в оставшихся потоках order/payment/receipt),
+  - закрыть Шаг 17 (обновление тестов под новый контракт),
+  - доделать Шаги 18-20 (расширенный прогон, UI-проверка, release notes).
