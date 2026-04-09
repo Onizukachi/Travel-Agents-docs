@@ -20,6 +20,7 @@
 
 ## 3. Техническая стратегия (без миграций)
 - В `Coupon` задаем `self.ignored_columns` для всех legacy-полей, которые не должны существовать в доменной модели.
+- Объединяем всю логику из `Coupons::Base/Relations/Validations/Callbacks` напрямую в `app/models/coupon.rb` и удаляем concerns как источник логики.
 - Переносим чтение шаблонных значений на `coupon.promo_campaign` (делегаты/методы на модели `Coupon`).
 - Удаляем все участки кода, где legacy-поля `coupons` используются напрямую.
 - Добавляем rake-задачу валидации целостности (`coupons:assert_promo_campaign_integrity`) и используем её как deployment-check.
@@ -28,7 +29,7 @@
 ## 4. Подробный план реализации (один PR)
 - [ ] Шаг 1: Зафиксировать финальный контракт `Coupon` и список legacy-колонок для `ignored_columns`.
 - [ ] Шаг 2: Переписать `app/models/coupon.rb` с явной структурой (ассоциации, валидации, enum/state-методы, делегаты к `promo_campaign`, состояние использования).
-- [ ] Шаг 3: Упростить/удалить concerns `Coupons::Base/Relations/Validations/Callbacks` или встроить нужную логику в новую `Coupon` (частично: из concerns удалены `coupon_group`-связи и параметры).
+- [ ] Шаг 3: Полностью объединить concerns `Coupons::Base/Relations/Validations/Callbacks` в `app/models/coupon.rb`, удалить concerns-файлы и оставить логику только в модели `Coupon` (частично: из concerns удалены `coupon_group`-связи и параметры).
 - [ ] Шаг 4: Перевести расчеты скидок и сертификатов на `promo_campaign`-источник (Order, Payment, receipts, serializers, AppliedCertificate, Certificate).
 - [ ] Шаг 5: Обновить `PromoCampaigns::CouponCreator`, чтобы в `Coupon` писались только целевые поля.
 - [x] Шаг 6: Удалить `CouponGroup` целиком: модель, контроллер, views, factory/spec, роуты, воркер `CouponGenerator`, mailer `CouponMailer`.
@@ -83,6 +84,6 @@
 - Основной технический риск: скрытые обращения к legacy-колонкам `coupons` в редких потоках.
   Стратегия: `ignored_columns` + полный grep-аудит + целевые спеки.
 - Точка продолжения:
-  - завершить Шаги 1-5 (`Coupon` контракт, `ignored_columns`, перевод на `promo_campaign`),
+  - завершить Шаги 1-5 (включая полную консолидацию concern-логики в `Coupon` и удаление concerns),
   - закрыть Шаги 12-14 (CouponChecker + финальная чистка админки/форм/фильтров),
   - доделать Шаги 15-20 (integrity rake-check, зачистка `lib/tasks/coupons.rake`, тесты, release notes).
