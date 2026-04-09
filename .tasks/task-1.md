@@ -46,7 +46,7 @@
 - [x] Шаг 17: Удалить/обновить тесты legacy-модулей; добавить тесты на новый контракт `Coupon` и запрет обращения к ignored-полям (`spec/models/coupon_spec.rb`, `spec/factories/coupon.rb`, `spec/support/shared_contexts/prepare_certificate_context.rb`, стабилизация `spec/factories/user.rb` / `spec/factories/promo_campaign.rb` для надежного создания промо/купонов).
 - [ ] Шаг 18: Прогнать релевантные спеки: promo_campaign/coupon/order/payment/receipts/admin (частично: прогнаны `spec/models/coupon_spec.rb`, `spec/models/certificate_spec.rb`, `spec/services/coupons/coupon_checker_spec.rb`, `spec/workers/promo_campaigns/coupon_generator_worker_spec.rb`, `spec/mindbox/state_processor_spec.rb`, `spec/services/line_items_v2/advanced/builder_full_prepayment_cases_spec.rb`, `spec/apis/payments/uniteller_spec.rb:217`, `spec/apis/payments/uniteller_spec.rb:248`, `spec/models/order_spec.rb:404`, `spec/models/order_spec.rb:405`, `spec/models/promo_campaign_spec.rb:411`, `spec/models/promo_campaign_spec.rb:457`, `spec/models/promo_campaign_spec.rb:476`, `spec/models/promo_campaign_spec.rb:488`, `spec/models/promo_campaign_spec.rb`, `spec/workers/promo_campaigns/archived_cleanup_worker_spec.rb`, `spec/services/promo_campaigns/conditions_params_parser_spec.rb`; 108 examples + 78 examples, 0 failures).
 - [ ] Шаг 19: Проверить маршруты и админ-UI после удаления legacy entrypoints (частично: проверены `rails routes` для coupon/promo/check_coupon/score_transfer; legacy endpoints `coupon_maker/coupon_group/papi/v3/coupons` отсутствуют).
-- [ ] Шаг 20: Подготовить release notes для выката (новые отключенные endpoint'ы и runbook по rake-check).
+- [x] Шаг 20: Подготовить release notes для выката (новые отключенные endpoint'ы и runbook по rake-check) — `.tasks/task-1-release-notes.md`.
 
 ## 5. Список полей `coupons`, которые считаются legacy в коде
 - `relative`
@@ -85,5 +85,4 @@
   Стратегия: `ignored_columns` + полный grep-аудит + целевые спеки.
 - Точка продолжения:
   - доделать Шаг 18 (расширенный прогон + admin UI),
-  - закрыть Шаг 19 (маршруты и UI-проверка после удаления entrypoints),
-  - подготовить Шаг 20 (release notes и runbook по `coupons:assert_promo_campaign_integrity`).
+  - закрыть Шаг 19 (маршруты и UI-проверка после удаления entrypoints).
