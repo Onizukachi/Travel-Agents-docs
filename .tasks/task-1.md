@@ -30,7 +30,7 @@
 - [x] Шаг 1: Зафиксировать финальный контракт `Coupon` и список legacy-колонок для `ignored_columns`.
 - [x] Шаг 2: Переписать `app/models/coupon.rb` с явной структурой (ассоциации, валидации, enum/state-методы, делегаты к `promo_campaign`, состояние использования).
 - [x] Шаг 3: Полностью объединить concerns `Coupons::Base/Relations/Validations/Callbacks` в `app/models/coupon.rb`, удалить concerns-файлы и оставить логику только в модели `Coupon`.
-- [ ] Шаг 4: Перевести расчеты скидок и сертификатов на `promo_campaign`-источник (Order, Payment, receipts, serializers, AppliedCertificate, Certificate).
+- [ ] Шаг 4: Перевести расчеты скидок и сертификатов на `promo_campaign`-источник (Order, Payment, receipts, serializers, AppliedCertificate, Certificate) (частично: SQL расчеты в `Order.compact_orders_query`, `Accounting`, `AccountingOld` переведены с `coupons.value/relative` на `promo_campaigns.value/relative`).
 - [x] Шаг 5: Обновить `PromoCampaigns::CouponCreator`, чтобы в `Coupon` писались только целевые поля.
 - [x] Шаг 6: Удалить `CouponGroup` целиком: модель, контроллер, views, factory/spec, роуты, воркер `CouponGenerator`, mailer `CouponMailer`.
 - [x] Шаг 7: Удалить `CouponMaker` целиком: контроллер, view, routes, роль/меню-линки (роль/права в `lib/new_roles.json` и `lib/old_roles.json` не трогались по договоренности).
@@ -44,7 +44,7 @@
 - [x] Шаг 15: Добавить rake-задачу `coupons:assert_promo_campaign_integrity` (падает, если найдены купоны без `promo_campaign_id`).
 - [x] Шаг 16: Почистить `lib/tasks/coupons.rake` от legacy conversion-task'ов и оставить только актуальные проверки/утилиты.
 - [ ] Шаг 17: Удалить/обновить тесты legacy-модулей; добавить тесты на новый контракт `Coupon` и запрет обращения к ignored-полям (частично: обновлены `spec/factories/coupon.rb` и `spec/support/shared_contexts/prepare_certificate_context.rb`).
-- [ ] Шаг 18: Прогнать релевантные спеки: promo_campaign/coupon/order/payment/receipts/admin (частично: прогнаны `spec/models/certificate_spec.rb`, `spec/services/coupons/coupon_checker_spec.rb`, `spec/workers/promo_campaigns/coupon_generator_worker_spec.rb`, `spec/mindbox/state_processor_spec.rb`, `spec/services/line_items_v2/advanced/builder_full_prepayment_cases_spec.rb`, `spec/apis/payments/uniteller_spec.rb:217`, `spec/apis/payments/uniteller_spec.rb:248`, `spec/models/order_spec.rb:404`, `spec/models/order_spec.rb:405`).
+- [ ] Шаг 18: Прогнать релевантные спеки: promo_campaign/coupon/order/payment/receipts/admin (частично: прогнаны `spec/models/certificate_spec.rb`, `spec/services/coupons/coupon_checker_spec.rb`, `spec/workers/promo_campaigns/coupon_generator_worker_spec.rb`, `spec/mindbox/state_processor_spec.rb`, `spec/services/line_items_v2/advanced/builder_full_prepayment_cases_spec.rb`, `spec/apis/payments/uniteller_spec.rb:217`, `spec/apis/payments/uniteller_spec.rb:248`, `spec/models/order_spec.rb:404`, `spec/models/order_spec.rb:405`, `spec/models/promo_campaign_spec.rb:411`, `spec/models/promo_campaign_spec.rb:457`, `spec/models/promo_campaign_spec.rb:476`, `spec/models/promo_campaign_spec.rb:488`).
 - [ ] Шаг 19: Проверить маршруты и админ-UI после удаления legacy entrypoints (частично: удаленные маршруты проверены через `rails routes`).
 - [ ] Шаг 20: Подготовить release notes для выката (новые отключенные endpoint'ы и runbook по rake-check).
 
