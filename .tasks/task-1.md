@@ -1,129 +1,88 @@
-# Интеграция Vanta POS-кредитования: завершено
+# Задача: «Тонкая» модель coupons и удаление legacy-ветки купонов
 
-## Статус
+## 1. Бизнес контекст для задачи
+- `PromoCampaign` — единственный источник шаблона купона: номинал, тип скидки, лимиты, условия, срок действия, контент.
+- `Coupon` — только носитель состояния экземпляра: `pin`, `uses_left`, `promo_campaign_id`, `certificate_id`, `manager_id`.
+- Legacy-ветка генерации/создания купонов (`CouponGroup`, `CouponMaker`, `CouponBulkCreator`, `PAPI V3 CouponsController`) удаляется полностью.
+- В рамках текущего PR **не делаем миграции схемы** (по процессу деплоя миграции применяются до кода).
 
-Интеграция Vanta POS-кредитования в текущую платежную модель проекта реализована.
+## 2. Подтвержденные решения и обоснования
+- Решение A: legacy-компоненты удаляем сразу, без депрекации.
+  Обоснование: решение владельца домена, неактуальные потоки исключаются из продукта.
+- Решение B: считаем, что в проде нет купонов без `promo_campaign_id`.
+  Обоснование: подтверждено бизнесом; data-backfill не нужен как обязательный этап, но нужен защитный rake-check.
+- Решение C: `ArchivedCoupon` и его упоминания удаляем как неактуальные.
+  Обоснование: подтверждено бизнесом как устаревший путь.
+- Решение D: один большой PR.
+  Обоснование: согласовано.
+- Решение E: «тонкость» модели достигаем в коде без физического удаления колонок из таблицы `coupons`.
+  Обоснование: безопасно при порядке деплоя «миграции -> код», исключает падение рантайма из-за отсутствующих колонок до переключения кода.
 
-На текущий момент сделано:
-- реализован процессор Vanta;
-- реализованы все нужные API endpoint-ы Vanta;
-- настроена админка для управления webhook-подписками;
-- реализована обработка входящих callback/webhook от Vanta;
-- добавлены тесты на processor и controller flow.
+## 3. Техническая стратегия (без миграций)
+- В `Coupon` задаем `self.ignored_columns` для всех legacy-полей, которые не должны существовать в доменной модели.
+- Переносим чтение шаблонных значений на `coupon.promo_campaign` (делегаты/методы на модели `Coupon`).
+- Удаляем все участки кода, где legacy-поля `coupons` используются напрямую.
+- Добавляем rake-задачу валидации целостности (`coupons:assert_promo_campaign_integrity`) и используем её как deployment-check.
+- Физические колонки и таблицы legacy остаются в БД как «мертвые» до отдельного релизного окна с миграциями.
 
-По сути задача завершена.
+## 4. Подробный план реализации (один PR)
+- [ ] Шаг 1: Зафиксировать финальный контракт `Coupon` и список legacy-колонок для `ignored_columns`.
+- [ ] Шаг 2: Переписать `app/models/coupon.rb` с явной структурой (ассоциации, валидации, enum/state-методы, делегаты к `promo_campaign`, состояние использования).
+- [ ] Шаг 3: Упростить/удалить concerns `Coupons::Base/Relations/Validations/Callbacks` или встроить нужную логику в новую `Coupon` (частично: из concerns удалены `coupon_group`-связи и параметры).
+- [ ] Шаг 4: Перевести расчеты скидок и сертификатов на `promo_campaign`-источник (Order, Payment, receipts, serializers, AppliedCertificate, Certificate).
+- [ ] Шаг 5: Обновить `PromoCampaigns::CouponCreator`, чтобы в `Coupon` писались только целевые поля.
+- [x] Шаг 6: Удалить `CouponGroup` целиком: модель, контроллер, views, factory/spec, роуты, воркер `CouponGenerator`, mailer `CouponMailer`.
+- [x] Шаг 7: Удалить `CouponMaker` целиком: контроллер, view, routes, роль/меню-линки (роль/права в `lib/new_roles.json` и `lib/old_roles.json` не трогались по договоренности).
+- [x] Шаг 8: Удалить `CouponBulkCreator`, `CouponGenerationScheduler`, `CouponGenerationLog`, ActiveAdmin-ресурс логов и связанные упоминания (миграции/схема не трогались).
+- [x] Шаг 9: Удалить `Papi::V3::CouponsController` и маршруты `v3/coupons#create` + `v3/coupons/array_coupons`.
+- [x] Шаг 10: Удалить `CouponFactory` и все вызовы из удаляемых потоков.
+- [x] Шаг 11: Удалить `ArchivedCoupon` и все его runtime-упоминания (`Order#coupon` fallback, админка archived coupons, старые проверки).
+- [ ] Шаг 12: Обновить `Coupons::CouponChecker` и связанные сервисы так, чтобы условия/ограничения читались только из `promo_campaign`.
+- [ ] Шаг 13: Обновить админку `app/admin/coupons.rb` и `check_coupon` на отображение/работу только через `promo_campaign`-данные (частично: удалены `coupon_group`-колонки/ссылки/фильтры).
+- [ ] Шаг 14: Удалить фильтры/формы/параметры, завязанные на legacy-колонки (`value`, `relative`, `title`, `description`, `coupon_group_id`, и т.д.) (частично: удален `coupon_group_id`).
+- [ ] Шаг 15: Добавить rake-задачу `coupons:assert_promo_campaign_integrity` (падает, если найдены купоны без `promo_campaign_id`).
+- [ ] Шаг 16: Почистить `lib/tasks/coupons.rake` от legacy conversion-task'ов и оставить только актуальные проверки/утилиты (частично: убран `coupon_group_id: nil` фильтр).
+- [ ] Шаг 17: Удалить/обновить тесты legacy-модулей; добавить тесты на новый контракт `Coupon` и запрет обращения к ignored-полям (частично: удалены factory/spec для `CouponGroup`).
+- [ ] Шаг 18: Прогнать релевантные спеки: promo_campaign/coupon/order/payment/receipts/admin (частично: прогнаны `spec/models/certificate_spec.rb` и `spec/models/promo_campaign_spec.rb:484`).
+- [ ] Шаг 19: Проверить маршруты и админ-UI после удаления legacy entrypoints (частично: удаленные маршруты проверены через `rails routes`).
+- [ ] Шаг 20: Подготовить release notes для выката (новые отключенные endpoint'ы и runbook по rake-check).
 
-## Что вошло в реализацию
+## 5. Список полей `coupons`, которые считаются legacy в коде
+- `relative`
+- `value`
+- `used`
+- `conditions`
+- `expires_at`
+- `coupon_group_id`
+- `is_generated`
+- `prepaid`
+- `data`
+- `title`
+- `description`
+- `search_types`
+- `personal_uses_limit`
+- `max_value`
 
-### 1. Платежный процессор и endpoint-ы
+Целевые рабочие поля в коде:
+- `id`
+- `pin`
+- `uses_left`
+- `promo_campaign_id`
+- `certificate_id`
+- `manager_id`
+- `created_at`
+- `updated_at`
 
-- реализован `PaymentProcessor::Vanta`;
-- реализовано создание ссылки на оплату;
-- реализованы endpoint-ы для webhook-подписок;
-- массовое создание подписок переведено на `createFew`.
-
-### 2. Админка webhook-подписок
-
-- в админке можно создавать подписки сразу на несколько событий;
-- выбор событий сделан чекбоксами;
-- админка использует bulk endpoint Vanta.
-
-### 3. Callback/webhook обработка
-
-Реализован flow для `/payment/notify_vanta`:
-- успешная обработка возвращает `200 OK` с телом `OK`;
-- ошибки обработки возвращают `400`;
-- неизвестные события считаются невалидными.
-
-Реализован `VantaCallbackProcessor` с обработкой событий:
-- `blank.new`
-- `blank.wait_for_decision`
-- `blank.approve`
-- `blank.wait_for_auth`
-- `blank.cooled`
-- `blank.payed`
-- `blank.rejected`
-- `blank.canceled`
-- `blank.auth_canceled`
-- `blank.error`
-
-## Подтвержденное поведение
-
-### Промежуточные события
-
-События:
-- `blank.new`
-- `blank.wait_for_decision`
-- `blank.approve`
-- `blank.wait_for_auth`
-
-Поведение:
-- только логируются;
-- состояние заказа и платежа не меняют.
-
-### Cooling
-
-Для `blank.cooled`:
-- запрашивается `payment_info`;
-- берется `cooling_expires_at`;
-- вызывается `payment.update_cooling(cooling_expires_at)`;
-- платеж переводится в frozen через:
-  - `payment.update_columns(frozen_amount: payment.requested_amount, frozen_at: Time.current)`
-- заказ не переводится в `paid`;
-- `mark_authorized!` на этом шаге не вызывается, чтобы не генерировать чеки на заморозке.
-
-### Успешная оплата
-
-Для `blank.payed`:
-- валидируется `sum` в копейках;
-- в `payment.data` сохраняются только:
-  - `credit_id`
-  - `bank_name`
-  - `vanta_paid_at`
-- если у платежа есть cooling, он снимается;
-- если платеж еще не frozen, допускается локальная авторизация через `mark_authorized!`;
-- затем выполняется `payment.mark_captured!(payment.requested_amount)`;
-- заказ переводится в `paid`, если это допустимо.
-
-### Отрицательные финалы
-
-События:
-- `blank.rejected`
-- `blank.canceled`
-- `blank.auth_canceled`
-- `blank.error`
-
-Поведение:
-- логируются;
-- если платеж был в cooling/frozen, вызываются:
-  - `payment.reset_cooling`
-  - `payment.update!(frozen_amount: 0, frozen_at: nil)`
-- заказ в `paid` не переводится.
-
-## Архитектурные решения
-
-- новую сущность кредита не вводим;
-- используем существующий `Payment`;
-- Vanta не идет через `PaymentCredit`;
-- до `blank.payed` не считаем заказ оплаченным;
-- webhook payload целиком в `payment.data` не сохраняем;
-- логи сделаны идемпотентными;
-- тексты логов и локальных ошибок вынесены в `I18n`;
-- для событий используются отдельные переводы `payments.vanta.events.*`.
-
-## Основные файлы
-
-- [`app/apis/vanta_callback_processor.rb`](/home/hikaru/projects/work/leveltravel/app/apis/vanta_callback_processor.rb)
-- [`app/controllers/vanta_notifications_controller.rb`](/home/hikaru/projects/work/leveltravel/app/controllers/vanta_notifications_controller.rb)
-- [`app/apis/payment_processor/vanta.rb`](/home/hikaru/projects/work/leveltravel/app/apis/payment_processor/vanta.rb)
-- [`app/apis/payment_processor/vanta_endpoints/webhooks.rb`](/home/hikaru/projects/work/leveltravel/app/apis/payment_processor/vanta_endpoints/webhooks.rb)
-- [`app/admin/vanta_webhooks.rb`](/home/hikaru/projects/work/leveltravel/app/admin/vanta_webhooks.rb)
-- [`app/views/admin/vanta_webhooks/_content.html.erb`](/home/hikaru/projects/work/leveltravel/app/views/admin/vanta_webhooks/_content.html.erb)
-- [`spec/apis/vanta_callback_processor_spec.rb`](/home/hikaru/projects/work/leveltravel/spec/apis/vanta_callback_processor_spec.rb)
-- [`spec/controllers/vanta_notifications_controller_spec.rb`](/home/hikaru/projects/work/leveltravel/spec/controllers/vanta_notifications_controller_spec.rb)
-
-## Итог
-
-Интеграция Vanta в рамках этой задачи готова.
-
-Если будет следующая итерация, это уже будет не базовая реализация интеграции, а точечные доработки поведения или сопровождение.
+## 6. Заметки для восстановления сессии
+- Согласовано с бизнесом:
+  - legacy ветка удаляется сразу;
+  - купонов без `promo_campaign_id` не ожидается;
+  - `ArchivedCoupon` удаляем;
+  - один PR;
+  - миграций схемы в этом PR не делаем.
+- Основной технический риск: скрытые обращения к legacy-колонкам `coupons` в редких потоках.
+  Стратегия: `ignored_columns` + полный grep-аудит + целевые спеки.
+- Точка продолжения:
+  - завершить Шаги 1-5 (`Coupon` контракт, `ignored_columns`, перевод на `promo_campaign`),
+  - закрыть Шаги 12-14 (CouponChecker + финальная чистка админки/форм/фильтров),
+  - доделать Шаги 15-20 (integrity rake-check, зачистка `lib/tasks/coupons.rake`, тесты, release notes).
