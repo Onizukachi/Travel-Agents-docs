@@ -1,88 +1,45 @@
-# Задача: «Тонкая» модель coupons и удаление legacy-ветки купонов
+# Задача: отдельный загрузчик payment_methods для сертификатов
 
 ## 1. Бизнес контекст для задачи
-- `PromoCampaign` — единственный источник шаблона купона: номинал, тип скидки, лимиты, условия, срок действия, контент.
-- `Coupon` — только носитель состояния экземпляра: `pin`, `uses_left`, `promo_campaign_id`, `certificate_id`, `manager_id`.
-- Legacy-ветка генерации/создания купонов (`CouponGroup`, `CouponMaker`, `CouponBulkCreator`, `PAPI V3 CouponsController`) удаляется полностью.
-- В рамках текущего PR **не делаем миграции схемы** (по процессу деплоя миграции применяются до кода).
+Проект — travel-агрегатор, где покупка сертификата является отдельным пользовательским сценарием. Для сертификатов нужно отдавать фиксированный набор способов оплаты, не зависящий от состояния конкретного заказа.
 
-## 2. Подтвержденные решения и обоснования
-- Решение A: legacy-компоненты удаляем сразу, без депрекации.
-  Обоснование: решение владельца домена, неактуальные потоки исключаются из продукта.
-- Решение B: считаем, что в проде нет купонов без `promo_campaign_id`.
-  Обоснование: подтверждено бизнесом; data-backfill не нужен как обязательный этап, но нужен защитный rake-check.
-- Решение C: `ArchivedCoupon` и его упоминания удаляем как неактуальные.
-  Обоснование: подтверждено бизнесом как устаревший путь.
-- Решение D: один большой PR.
-  Обоснование: согласовано.
-- Решение E: «тонкость» модели достигаем в коде без физического удаления колонок из таблицы `coupons`.
-  Обоснование: безопасно при порядке деплоя «миграции -> код», исключает падение рантайма из-за отсутствующих колонок до переключения кода.
+Требование: для сертификатов всегда показывать 3 метода оплаты (`card`, `sbp`, `t_pay`) и не применять текущие проверки/валидации скрытия, которые используются для обычных заказов.
 
-## 3. Техническая стратегия (без миграций)
-- В `Coupon` задаем `self.ignored_columns` для всех legacy-полей, которые не должны существовать в доменной модели.
-- Объединяем всю логику из `Coupons::Base/Relations/Validations/Callbacks` напрямую в `app/models/coupon.rb` и удаляем concerns как источник логики.
-- Переносим чтение шаблонных значений на `coupon.promo_campaign` (делегаты/методы на модели `Coupon`).
-- Удаляем все участки кода, где legacy-поля `coupons` используются напрямую.
-- Добавляем rake-задачу валидации целостности (`coupons:assert_promo_campaign_integrity`) и используем её как deployment-check.
-- Физические колонки и таблицы legacy остаются в БД как «мертвые» до отдельного релизного окна с миграциями.
+## 2. Ключевые решения и обоснования
+1. Вынести формирование методов оплаты сертификата в отдельный сервис-класс (отдельный загрузчик), чтобы не перегружать существующий `PaymentMethods::Loader` и сохранить изоляцию логики сертификатов.
+2. Переиспользовать текущий формат контента (структуру полей) из существующего пайплайна `PaymentMethods::Loader`, чтобы фронт не требовал дополнительных адаптаций.
+3. Для сертификатов принудительно включать `enable: true` (и связанные флаги доступности) для `card`, `sbp`, `t_pay`, пропуская валидации скрытия.
+4. Добавить отдельный endpoint `payment_methods` в `Papi::V3::CertificatesController`, который отдает список методов оплаты сертификата.
+5. В `Order#payment_methods` добавить ветку для `is_certificate?`, чтобы при работе с заказом-сертификатом возвращался новый сертификатный загрузчик.
 
-## 4. Подробный план реализации (один PR)
-- [x] Шаг 1: Зафиксировать финальный контракт `Coupon` и список legacy-колонок для `ignored_columns`.
-- [x] Шаг 2: Переписать `app/models/coupon.rb` с явной структурой (ассоциации, валидации, enum/state-методы, делегаты к `promo_campaign`, состояние использования).
-- [x] Шаг 3: Полностью объединить concerns `Coupons::Base/Relations/Validations/Callbacks` в `app/models/coupon.rb`, удалить concerns-файлы и оставить логику только в модели `Coupon`.
-- [x] Шаг 4: Перевести расчеты скидок и сертификатов на `promo_campaign`-источник (Order, Payment, receipts, serializers, AppliedCertificate, Certificate) (через `Coupon`-делегаты к `promo_campaign` и обновление SQL-расчетов в `Order.compact_orders_query`, `Accounting`, `AccountingOld`).
-- [x] Шаг 5: Обновить `PromoCampaigns::CouponCreator`, чтобы в `Coupon` писались только целевые поля.
-- [x] Шаг 6: Удалить `CouponGroup` целиком: модель, контроллер, views, factory/spec, роуты, воркер `CouponGenerator`, mailer `CouponMailer`.
-- [x] Шаг 7: Удалить `CouponMaker` целиком: контроллер, view, routes, роль/меню-линки (роль/права в `lib/new_roles.json` и `lib/old_roles.json` не трогались по договоренности).
-- [x] Шаг 8: Удалить `CouponBulkCreator`, `CouponGenerationScheduler`, `CouponGenerationLog`, ActiveAdmin-ресурс логов и связанные упоминания (миграции/схема не трогались).
-- [x] Шаг 9: Удалить `Papi::V3::CouponsController` и маршруты `v3/coupons#create` + `v3/coupons/array_coupons`.
-- [x] Шаг 10: Удалить `CouponFactory` и все вызовы из удаляемых потоков.
-- [x] Шаг 11: Удалить `ArchivedCoupon` и все его runtime-упоминания (`Order#coupon` fallback, админка archived coupons, старые проверки).
-- [x] Шаг 12: Обновить `Coupons::CouponChecker` и связанные сервисы так, чтобы условия/ограничения читались только из `promo_campaign`.
-- [x] Шаг 13: Обновить админку `app/admin/coupons.rb` и `check_coupon` на отображение/работу только через `promo_campaign`-данные.
-- [x] Шаг 14: Удалить фильтры/формы/параметры, завязанные на legacy-колонки (`value`, `relative`, `title`, `description`, `coupon_group_id`, и т.д.).
-- [x] Шаг 15: Добавить rake-задачу `coupons:assert_promo_campaign_integrity` (падает, если найдены купоны без `promo_campaign_id`).
-- [x] Шаг 16: Почистить `lib/tasks/coupons.rake` от legacy conversion-task'ов и оставить только актуальные проверки/утилиты.
-- [x] Шаг 17: Удалить/обновить тесты legacy-модулей; добавить тесты на новый контракт `Coupon` и запрет обращения к ignored-полям (`spec/models/coupon_spec.rb`, `spec/factories/coupon.rb`, `spec/support/shared_contexts/prepare_certificate_context.rb`, стабилизация `spec/factories/user.rb` / `spec/factories/promo_campaign.rb` для надежного создания промо/купонов).
-- [ ] Шаг 18: Прогнать релевантные спеки: promo_campaign/coupon/order/payment/receipts/admin (частично: расширенный прогон `spec/routing/coupon_routes_spec.rb`, `spec/models/coupon_spec.rb`, `spec/models/certificate_spec.rb`, `spec/services/coupons/coupon_checker_spec.rb`, `spec/models/promo_campaign_spec.rb`, `spec/services/line_items_v2/advanced/builder_full_prepayment_cases_spec.rb`, `spec/apis/payments/uniteller_spec.rb:217`, `spec/apis/payments/uniteller_spec.rb:248`, `spec/models/order_spec.rb:404`, `spec/models/order_spec.rb:405`, `spec/workers/promo_campaigns/coupon_generator_worker_spec.rb`, `spec/workers/promo_campaigns/archived_cleanup_worker_spec.rb`, `spec/services/promo_campaigns/conditions_params_parser_spec.rb`, `spec/mindbox/state_processor_spec.rb`; 181 examples, 0 failures).
-- [ ] Шаг 19: Проверить маршруты и админ-UI после удаления legacy entrypoints (частично: проверены `rails routes` и добавлен `spec/routing/coupon_routes_spec.rb` на отсутствие legacy routes `coupon_maker/coupon_group/papi-v3-coupons`; UI-smoke admin страниц остается).
-- [x] Шаг 20: Подготовить release notes для выката (новые отключенные endpoint'ы и runbook по rake-check) — `.tasks/task-1-release-notes.md`.
+## 3. Структурированный список задач
+- [ ] Шаг 1: Добавить новый сервис-загрузчик методов оплаты сертификата в `app/services/payment_methods/`.
+- [ ] Шаг 2: Реализовать в загрузчике сбор только 3 методов (`card`, `sbp`, `t_pay`) с тем же форматом полей, что и в `PaymentMethods::Loader`.
+- [ ] Шаг 3: Обеспечить принудительное включение методов (без валидаций скрытия и отключения).
+- [ ] Шаг 4: В `Order#payment_methods` добавить условие `is_certificate?` и возврат списка из нового загрузчика.
+- [ ] Шаг 5: Добавить экшен `payment_methods` в `Papi::V3::CertificatesController`.
+- [ ] Шаг 6: Добавить роут `payment_methods` в `config/routes/api.rb` для `namespace(:certificates)`.
+- [ ] Шаг 7: Проверить соответствие формата ответа ожиданиям фронта и текущим API-паттернам PAPI v3.
+- [ ] Шаг 8: Добавить/обновить тесты (минимум на загрузчик и контроллерный ответ).
+- [ ] Шаг 9: Прогнать релевантные RSpec и зафиксировать результат.
 
-## 5. Список полей `coupons`, которые считаются legacy в коде
-- `relative`
-- `value`
-- `used`
-- `conditions`
-- `expires_at`
-- `coupon_group_id`
-- `is_generated`
-- `prepaid`
-- `data`
-- `title`
-- `description`
-- `search_types`
-- `personal_uses_limit`
-- `max_value`
+## 4. Заметки для восстановления сессии
+### Текущее состояние проекта и уже выполненная работа
+- Проанализирован текущий поток методов оплаты:
+  - Фронт mobile web получает методы через `orders.payment_methods`.
+  - Бэкенд отдает их через `Papi::V3::OrdersController#payment_methods` -> `Order#payment_methods`.
+  - `Order#payment_methods` использует `PaymentMethods::Loader`.
+  - `PaymentMethods::Loader` строит данные через билдеры + валидаторы (`ValidationPerformer`, `CardValidator` и др.).
+- Подтверждено, что кнопка оплаты картой на фронте включается только при наличии метода `card` с `enable: true`.
 
-Целевые рабочие поля в коде:
-- `id`
-- `pin`
-- `uses_left`
-- `promo_campaign_id`
-- `certificate_id`
-- `manager_id`
-- `created_at`
-- `updated_at`
+### Критически важные принятые решения
+- Для сертификатов нужен отдельный путь формирования методов оплаты, не зависящий от заказа и без логики скрытия.
+- Формат данных должен быть совместим с текущим контрактом `PaymentMethods::Loader`, чтобы избежать правок фронта.
+- Изменения должны быть сделаны как минимум в трех точках: новый загрузчик, `Order#payment_methods`, `CertificatesController + routes`.
 
-## 6. Заметки для восстановления сессии
-- Согласовано с бизнесом:
-  - legacy ветка удаляется сразу;
-  - купонов без `promo_campaign_id` не ожидается;
-  - `ArchivedCoupon` удаляем;
-  - один PR;
-  - миграций схемы в этом PR не делаем.
-- Основной технический риск: скрытые обращения к legacy-колонкам `coupons` в редких потоках.
-  Стратегия: `ignored_columns` + полный grep-аудит + целевые спеки.
-- Точка продолжения:
-  - доделать Шаг 18 (расширенный прогон + admin UI),
-  - закрыть Шаг 19 (маршруты и UI-проверка после удаления entrypoints).
+### Точка продолжения при прерывании
+1. Уточнить недостающие требования по формату ответа нового `certificates/payment_methods` endpoint.
+2. Реализовать новый загрузчик сертификатных методов.
+3. Подключить его в `Order#payment_methods` для `is_certificate?`.
+4. Добавить новый endpoint в `CertificatesController` и роутинг.
+5. Написать и прогнать тесты.
