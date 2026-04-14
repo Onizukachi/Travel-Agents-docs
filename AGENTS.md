@@ -214,10 +214,6 @@ bin/rspec spec/models/some_model_spec.rb:25
 
 ## 15) Feature Flags
 
-- Use feature flags for risky changes when gradual rollout or quick disable is needed.
-- Name flags by domain and behavior (example: `payments_new_receipt_flow`).
-- For each new flag, define owner and removal condition/date.
-- Remove stale flags and dead branches after stabilization.
 - Current baseline flags: `use_advanced_receipts`, `new_payments_architecture`.
 - These two flags are currently legacy and must be treated as always `true`.
 - Until removed, do not implement or rely on `false` behavior for these two flags.
