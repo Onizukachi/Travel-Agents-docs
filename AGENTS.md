@@ -14,7 +14,6 @@ Generated code should:
 - Follow Rails conventions (not fight the framework)
 - Use domain language (Participant, not User; Cloud, not GeneratedImage)
 - Keep logic at the right layer (models handle data, controllers handle HTTP, jobs coordinate workflows)
-- Normalize data properly (separate concerns into tables, not columns)
 
 ### LT CLI in Shell Session
 
@@ -70,7 +69,7 @@ If you want to add a new gem, propose it first (with a short rationale and trade
 
 ## Debugging and Development
 
-- Use `rails console` for interactive debugging.
+- Use `lt console` for interactive debugging.
 - Use `binding.irb` for breakpoints in development.
 
 ## Localization (I18n)
@@ -91,7 +90,6 @@ If you want to add a new gem, propose it first (with a short rationale and trade
 
 ### Constants Over Magic Numbers
 
-- Replace hard-coded values with named constants.
 - Use descriptive constant names that explain the value's purpose.
 - Keep constants at the top of the class/module or in a dedicated constants file when shared.
 
@@ -294,6 +292,11 @@ class Cloud < ApplicationRecord
   def ready_to_generate?
     analyzed?
   end
+
+  # and delegates complex logic to service classes
+  def generate_card_image
+    Clouds::CardGenerator.new(self).generate
+  end
 end
 
 module Clouds
@@ -304,7 +307,7 @@ module Clouds
     end
 
     def generate
-      # Complex API logic here, returns IO object
+      # Complex API logic here
     end
   end
 end
@@ -318,7 +321,7 @@ module Clouds
     end
 
     def check
-      # Moderation logic, returns true/false
+      # Moderation logic
     end
   end
 end
@@ -558,8 +561,6 @@ create_table :clouds do |t|
 end
 ```
 
-Use ActiveRecord enums in models for these string state columns.
-
 ### Migration & Schema Workflow
 
 - After adding or changing migrations, run `bundle exec rails db:migrate`.
@@ -574,7 +575,7 @@ Use ActiveRecord enums in models for these string state columns.
 **Good separation:**
 ```ruby
 # Job orchestrates workflow
-class CloudGenerationJob < ApplicationJob
+class CloudGenerationJob < ApplicationWorker
   def perform(cloud)
     generate(cloud)
   end
@@ -597,7 +598,6 @@ module Clouds
 
     def generate
       # Complex API/processing logic here
-      StringIO.new(decoded_image_data)
     end
 
     private
