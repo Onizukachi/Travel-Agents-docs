@@ -192,6 +192,7 @@ After migration edits:
 ## 13) Testing Rules
 
 - Use RSpec (not minitest).
+- Pre-review minimum: run tests only for changed files/changed behavior.
 - Prefer focused runs:
 
 ```bash
@@ -211,11 +212,21 @@ bin/rspec spec/models/some_model_spec.rb:25
 - Prefer RESTful routes.
 - Use namespaces/scopes for logical and auth boundaries (participant/admin/webhooks).
 
-## 15) Payments
+## 15) Feature Flags
+
+- Use feature flags for risky changes when gradual rollout or quick disable is needed.
+- Name flags by domain and behavior (example: `payments_new_receipt_flow`).
+- For each new flag, define owner and removal condition/date.
+- Remove stale flags and dead branches after stabilization.
+- Current baseline flags: `use_advanced_receipts`, `new_payments_architecture`.
+- These two flags are currently legacy and must be treated as always `true`.
+- Until removed, do not implement or rely on `false` behavior for these two flags.
+
+## 16) Payments
 
 - For order/payment/callback/receipt flows, follow: `.docs/payments.md`.
 
-## 16) Definition of Done
+## 17) Definition of Done
 
 ### MUST
 
@@ -226,7 +237,7 @@ bin/rspec spec/models/some_model_spec.rb:25
 - I18n keys are used for AR errors/attributes/model names.
 - `app/admin/*.rb` follows the agreed block order.
 - Required migrations are applied and schema changes are clean/relevant.
-- Relevant tests pass locally for changed behavior.
+- Tests related to changed files/changed behavior pass locally.
 
 ### SHOULD
 
