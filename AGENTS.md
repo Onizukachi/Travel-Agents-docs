@@ -182,8 +182,11 @@ After migration edits:
 1. Start logs: `lt logs rails`.
 2. Open target page directly (example: `https://leveltravel.dev/admin/payment_logs`).
 3. If auth required, click `Войти` (credentials are prefilled).
-4. If `502 Bad Gateway`, reload and retry.
-5. Use Rails logs to diagnose/fix UI errors.
+4. If `502 Bad Gateway`, reload and wait up to 20 seconds.
+5. If page is still unavailable after 20 seconds, restart services:
+   - `lt restart rails && lt restart nginx`
+6. Reload the page again and wait up to 20 seconds.
+7. If it still fails after restart, treat it as an application error and use Rails logs to diagnose/fix.
 
 ## 13) Testing Rules
 
