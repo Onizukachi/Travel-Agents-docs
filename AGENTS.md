@@ -153,11 +153,12 @@ After migration edits:
 ## 10) Localization (I18n)
 
 - Prefer translations in `config/locales/ru.yml`.
-- Use keys under:
+- For ActiveRecord validations, model names, and attribute names, prefer keys under:
   - `activerecord.errors.models`
   - `activerecord.attributes`
   - `activerecord.models`
-- Avoid hardcoded Russian strings in validations and model labels.
+- Custom I18n keys are allowed (and preferred) for business/UI texts that are not model metadata.
+- Avoid hardcoded Russian strings in reusable user-facing messages.
 
 ## 11) Formatting Rules
 
