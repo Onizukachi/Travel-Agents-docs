@@ -222,7 +222,12 @@ bin/rspec spec/models/some_model_spec.rb:25
 
 - For order/payment/callback/receipt flows, follow: `.docs/payments.md`.
 
-## 17) Definition of Done
+## 17) PAPI v3 Documentation
+
+- For any added/changed PAPI v3 route or contract, update docs using: `.docs/papi_v3_docs.md`.
+- Keep PAPI v3 docs in sync in the same PR as code changes.
+
+## 18) Definition of Done
 
 ### MUST
 
