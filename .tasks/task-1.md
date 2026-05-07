@@ -1,35 +1,44 @@
-# Рефакторинг payment_type для advanced receipts
+# Селектор статусов операторского платежа
 
-## Что хотели сделать
+## 1. Бизнес-контекст задачи
 
-Убрать определение `payment_type` из `LineItemsV2::Advanced::Builder`.
+В менеджерке заказа в блоке операторских платежей менеджеры фиксируют состояние документов и переносов, связанных с возвратами у туроператора. Сейчас есть только отдельное поле «Заявление на возврат ТО»: чекбокс и дата. Нужно расширить этот интерфейс до селектора статусов, чтобы в том же месте можно было управлять тремя независимыми состояниями операторского платежа:
 
-Причина: билдер товарных позиций не должен угадывать бизнес-сценарий по косвенным признакам вроде `params.present?` или `order.is_certificate?`. Контекст операции уже известен уровнем выше, в `Receipts::Builder`, где есть `receipt_type` и `operation_type`.
+- «Заявление на возврат ТО» через существующие поля `have_written_statement` и `written_statement_at`.
+- «Заявление на перенос» через новые поля `have_written_transfer` и `written_transfer_at`.
+- «Перенесено» через новые поля `has_transferred` и `transferred_at`.
 
-Ожидаемая схема:
+Несколько состояний могут быть отмечены одновременно. UI редактирует только состояние, выбранное в селекторе.
 
-- `advanced + purchase` -> `advanced_capture`
-- `advanced + refund` -> `advanced_refund`
-- `detailed + purchase` -> `full_prepayment`
-- `detailed + refund` -> `partial_refund`
-- если заказ является сертификатом и тип `full_prepayment`, использовать `prepayment`
+## 2. Ключевые решения и обоснование
 
-## Что сделали
+- Селектор отображать всегда в строке операторского платежа. Текущий блок фактически всегда присутствует в шаблоне, но скрывается CSS-классом: `show_written_statement` дает `fill`, если `amount_awaiting_refund > 0` или `written_statement_at` не `null`. Новая задача требует работы не только с возвратом, поэтому завязка на `amount_awaiting_refund` больше не подходит.
+- Порядок выбора значения по умолчанию: «Заявление на возврат ТО», затем «Заявление на перенос», затем «Перенесено». Если несколько чекбоксов отмечены, выбирается первое отмеченное значение в этом порядке; если не отмечено ничего, выбирается «Заявление на возврат ТО».
+- Использовать корректные английские имена новых полей: `has_transferred` и `transferred_at`, а не `has_transfered` и `transfered_at`.
+- Boolean-поля в базе: `default: false, null: false`. Date/time-поля без default, `null` разрешен.
+- Поведение чекбокса оставить идентичным текущему: при включении чекбокса соответствующая дата выставляется в текущее время, после этого пользователь может изменить дату вручную.
+- Не выключать другие состояния при включении выбранного состояния: бизнес-состояния независимы и могут быть отмечены одновременно.
+- Тесты на этом этапе не писать по прямому указанию.
 
-- Перенесли выбор `payment_type` в `Receipts::Builder`.
-- Убрали автоопределение типа из `LineItemsV2::Advanced::Builder`.
-- Сделали `LineItemsV2::Advanced::Builder.create_detailed` явным: он передает `full_prepayment`.
-- Для сертификатных заказов нормализуем `full_prepayment` в `prepayment`.
-- Перестали использовать внутренний alias `refund` для detailed refund.
-- Переименовали advanced payment type class `Refund` в `PartialRefund`.
-- Advanced payment type classes больше не определяют метод `payment_type`; тип хранится в `PaymentType::Context` и передается туда из билдера.
-- Обновили ручную фискализацию: detailed refund теперь использует `LineItemV2::REFUND_DETAILED_TYE`.
-- Обновили спеки для `Receipts::Builder` и `LineItemsV2::Advanced::Builder`.
+## 3. Структурированный список задач
 
-## Что еще желательно сделать
+- [ ] Шаг 1: Добавить миграцию для `operator_payments` с полями `have_written_transfer`, `written_transfer_at`, `has_transferred`, `transferred_at`.
+- [ ] Шаг 2: Применить миграцию через `bundle exec rails db:migrate` и проверить, что `db/schema.rb` содержит только релевантные изменения.
+- [ ] Шаг 3: Добавить новые поля в `OperatorPayment`: `attr_accessible`, сериализацию и локализацию атрибутов.
+- [ ] Шаг 4: Обновить фронтовую модель `operator_payment.coffee`: новые атрибуты, список статусов селектора, выбор статуса по умолчанию, computed-значения для активного чекбокса и даты.
+- [ ] Шаг 5: Обновить шаблон `_operator_payment.hjs`: оставить чекбокс и date picker, добавить селектор между ними, привязать значения к выбранному статусу и показывать блок всегда.
+- [ ] Шаг 6: Обновить контроллер `Manager::OperatorPaymentsController`, чтобы изменение чекбокса и даты принимало выбранный тип статуса и обновляло только соответствующие поля.
+- [ ] Шаг 7: Обновить CoffeeScript controller actions, чтобы они передавали выбранный статус и скрывали нужную кнопку применения без глобального `id="apply_btn"` конфликта.
+- [ ] Шаг 8: Скорректировать SCSS для нового селектора и сохранения текущего компактного расположения.
+- [ ] Шаг 9: Выполнить минимальную статическую проверку измененных файлов и, при возможности, открыть URL проверки в менеджерке для ручной проверки поведения.
+- [ ] Шаг 10: Синхронизировать `.tasks/task-1.md` в `../agents_md/`, выполнить там `git pull`, затем commit и push зеркала согласно правилам проекта.
 
-- Переименовать константу `LineItemV2::REFUND_DETAILED_TYE` в `REFUND_DETAILED_TYPE`, оставив временный alias для совместимости.
-- Подумать, можно ли заменить строковые типы в `Receipts::Builder::PAYMENT_TYPES` на константы для всех случаев, включая `prepayment`.
-- Проверить, нужны ли отдельные классы `AdvancedCapture`, `AdvancedRefund`, `PartialRefund`, если они почти не содержат поведения.
-- Отдельно починить старую проблему тестовой схемы/фабрики `partner :subagent_wl`: сейчас полный прогон `spec/services/receipts/builder_spec.rb` падает с `unknown attribute header_mobile_image`.
-- Отдельно разобрать RuboCop violations в `Admin::ManualFiscalizationController`, которые не связаны с этим изменением.
+## 4. Заметки для восстановления сессии
+
+Текущее состояние проекта: задача начинается в `/home/hikaru/projects/work/leveltravel`. До реализации изучены файлы `app/assets/javascripts/manager/templates/payments/_operator_payment.hjs`, `app/assets/javascripts/manager/models/operator_payment.coffee`, `app/assets/javascripts/manager/controllers/order_operator_payments_controller.coffee`, `app/controllers/manager/operator_payments_controller.rb`, `app/serializers/operator_payment_serializer.rb`, `app/models/operator_payment.rb`, `db/schema.rb`, `config/locales/ru.yml`, `app/assets/stylesheets/manager/order.scss`.
+
+Уже выполненная работа: выяснено, что старый блок «Заявление на возврат ТО» находится в шаблоне всегда, но скрыт CSS (`.written_statement { display: none; }`). Он становится видимым только когда computed-свойство `show_written_statement` добавляет класс `fill`. Это свойство сейчас возвращает true при `amount_awaiting_refund > 0` или `written_statement_at != null`. Чекбокс `have_written_statement` сам по себе не управляет видимостью блока.
+
+Критически важные решения: селектор нужно показывать всегда; порядок статусов для default selection фиксированный: refund statement, written transfer, transferred; новые поля называются `has_transferred` и `transferred_at`; несколько статусов могут быть включены одновременно; при включении чекбокса дата выставляется текущим временем по аналогии с существующим заявлением на возврат; тесты пока не писать.
+
+Точка продолжения при прерывании: начать с миграции для новых полей `operator_payments`, затем последовательно обновить модель Rails, serializer, CoffeeScript-модель, HJS-шаблон, controller actions, backend controller и стили. После изменения `.tasks/task-1.md` обязательно выполнить зеркалирование в `../agents_md/` с `git pull`, commit и push.
