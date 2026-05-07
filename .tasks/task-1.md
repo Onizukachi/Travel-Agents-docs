@@ -22,14 +22,14 @@
 
 ## 3. Структурированный список задач
 
-- [ ] Шаг 1: Добавить миграцию для `operator_payments` с полями `have_written_transfer`, `written_transfer_at`, `has_transferred`, `transferred_at`.
-- [ ] Шаг 2: Применить миграцию через `bundle exec rails db:migrate` и проверить, что `db/schema.rb` содержит только релевантные изменения.
-- [ ] Шаг 3: Добавить новые поля в `OperatorPayment`: `attr_accessible`, сериализацию и локализацию атрибутов.
-- [ ] Шаг 4: Обновить фронтовую модель `operator_payment.coffee`: новые атрибуты, список статусов селектора, выбор статуса по умолчанию, computed-значения для активного чекбокса и даты.
-- [ ] Шаг 5: Обновить шаблон `_operator_payment.hjs`: оставить чекбокс и date picker, добавить селектор между ними, привязать значения к выбранному статусу и показывать блок всегда.
-- [ ] Шаг 6: Обновить контроллер `Manager::OperatorPaymentsController`, чтобы изменение чекбокса и даты принимало выбранный тип статуса и обновляло только соответствующие поля.
-- [ ] Шаг 7: Обновить CoffeeScript controller actions, чтобы они передавали выбранный статус и скрывали нужную кнопку применения без глобального `id="apply_btn"` конфликта.
-- [ ] Шаг 8: Скорректировать SCSS для нового селектора и сохранения текущего компактного расположения.
+- [x] Шаг 1: Добавить миграцию для `operator_payments` с полями `have_written_transfer`, `written_transfer_at`, `has_transferred`, `transferred_at`.
+- [x] Шаг 2: Применить миграцию через `bundle exec rails db:migrate` и проверить, что `db/schema.rb` содержит только релевантные изменения.
+- [x] Шаг 3: Добавить новые поля в `OperatorPayment`: `attr_accessible`, сериализацию и локализацию атрибутов.
+- [x] Шаг 4: Обновить фронтовую модель `operator_payment.coffee`: новые атрибуты, список статусов селектора, выбор статуса по умолчанию, computed-значения для активного чекбокса и даты.
+- [x] Шаг 5: Обновить шаблон `_operator_payment.hjs`: оставить чекбокс и date picker, добавить селектор между ними, привязать значения к выбранному статусу и показывать блок всегда.
+- [x] Шаг 6: Обновить контроллер `Manager::OperatorPaymentsController`, чтобы изменение чекбокса и даты принимало выбранный тип статуса и обновляло только соответствующие поля.
+- [x] Шаг 7: Обновить CoffeeScript controller actions, чтобы они передавали выбранный статус и скрывали нужную кнопку применения без глобального `id="apply_btn"` конфликта.
+- [x] Шаг 8: Скорректировать SCSS для нового селектора и сохранения текущего компактного расположения.
 - [ ] Шаг 9: Выполнить минимальную статическую проверку измененных файлов и, при возможности, открыть URL проверки в менеджерке для ручной проверки поведения.
 - [ ] Шаг 10: Синхронизировать `.tasks/task-1.md` в `../agents_md/`, выполнить там `git pull`, затем commit и push зеркала согласно правилам проекта.
 
@@ -37,8 +37,8 @@
 
 Текущее состояние проекта: задача начинается в `/home/hikaru/projects/work/leveltravel`. До реализации изучены файлы `app/assets/javascripts/manager/templates/payments/_operator_payment.hjs`, `app/assets/javascripts/manager/models/operator_payment.coffee`, `app/assets/javascripts/manager/controllers/order_operator_payments_controller.coffee`, `app/controllers/manager/operator_payments_controller.rb`, `app/serializers/operator_payment_serializer.rb`, `app/models/operator_payment.rb`, `db/schema.rb`, `config/locales/ru.yml`, `app/assets/stylesheets/manager/order.scss`.
 
-Уже выполненная работа: выяснено, что старый блок «Заявление на возврат ТО» находится в шаблоне всегда, но скрыт CSS (`.written_statement { display: none; }`). Он становится видимым только когда computed-свойство `show_written_statement` добавляет класс `fill`. Это свойство сейчас возвращает true при `amount_awaiting_refund > 0` или `written_statement_at != null`. Чекбокс `have_written_statement` сам по себе не управляет видимостью блока.
+Уже выполненная работа: выяснено, что старый блок «Заявление на возврат ТО» находится в шаблоне всегда, но скрыт CSS (`.written_statement { display: none; }`). Он становится видимым только когда computed-свойство `show_written_statement` добавляет класс `fill`. Это свойство возвращало true при `amount_awaiting_refund > 0` или `written_statement_at != null`. Чекбокс `have_written_statement` сам по себе не управлял видимостью блока. Добавлены миграция, поля модели/serializer/локализации, backend-обработка выбранного статуса, фронтовый селектор, привязки чекбокса/date picker к выбранному статусу и стили. `bundle exec rails db:migrate` выполнен; `schema.rb` вручную очищен от нерелевантного шума локальной регенерации и оставляет только version задачи и новые поля.
 
 Критически важные решения: селектор нужно показывать всегда; порядок статусов для default selection фиксированный: refund statement, written transfer, transferred; новые поля называются `has_transferred` и `transferred_at`; несколько статусов могут быть включены одновременно; при включении чекбокса дата выставляется текущим временем по аналогии с существующим заявлением на возврат; тесты пока не писать.
 
-Точка продолжения при прерывании: начать с миграции для новых полей `operator_payments`, затем последовательно обновить модель Rails, serializer, CoffeeScript-модель, HJS-шаблон, controller actions, backend controller и стили. После изменения `.tasks/task-1.md` обязательно выполнить зеркалирование в `../agents_md/` с `git pull`, commit и push.
+Точка продолжения при прерывании: продолжить с минимальной проверки измененных файлов, ручной проверки менеджерки по `https://manager.leveltravel.dev/orders/all/255012167` при доступности локальных сервисов и финальной синхронизации `.tasks/task-1.md` в `../agents_md/` с `git pull`, commit и push.
