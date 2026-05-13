@@ -29,6 +29,19 @@
 - Use `lt console` for interactive debugging.
 - Use `binding.irb` for breakpoints in development.
 
+### When frontend changes are not visible
+
+If changes in JS, templates, or frontend I18n do not appear after a browser hard reload and service restart, refresh Rails/Sprockets assets inside the Rails container:
+
+```bash
+docker exec lt.rails sh -lc 'bundle exec rake tmp:cache:clear'
+docker exec lt.rails sh -lc 'RAILS_ENV=development bundle exec rails assets:precompile'
+source ./lt.sh
+lt restart rails && lt restart nginx
+```
+
+Use this when `manager/index.prod.js` or another compiled asset still contains old translations/code. Running cache cleanup on the host may not affect the asset cache served by `lt.rails`.
+
 ### Documentation sync (mandatory)
 
 After every change to any of:
