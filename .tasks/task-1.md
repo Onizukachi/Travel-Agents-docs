@@ -71,7 +71,7 @@
 
 - [x] Шаг 1: Уточнить бизнес-правила по валюте `RUB` в форме переноса: курс для `RUB` должен быть `1`.
 - [x] Шаг 2: Уточнить, что значит "убрать статус canceled": статус остается на беке, на фронте скрывается возможность перехода в него.
-- [x] Шаг 3: Скрыть frontend action `cancel` для `OperatorPayment`, не меняя backend AASM и финансовую логику исторических `canceled`.
+- [x] Шаг 3: Убрать AASM event `cancel` у `OperatorPayment`, оставив backend state `canceled` для исторических данных; frontend-фильтр не нужен, потому что `allowed_actions` больше не содержит `cancel`.
 - [x] Шаг 4: Добавить валюту и курс в данные попапа переноса: defaults из исходного платежа `record.currency` и `record.currency_rate`; если данных нет, fallback `currency = 'USD'`, `currency_rate = 0.0`.
 - [x] Шаг 5: Добавить в шаблон переноса блок "курс + кнопка обновления + селектор валюты" по паттерну `_operator_payment_editor.hjs`.
 - [x] Шаг 6: Добавить в transfer popup загрузку актуальных курсов через `record.operator` или `order.package.operator`, выбрать курс по текущей валюте, для `RUB` ставить `1`, обновлять `data.currency_rate` по кнопке.
