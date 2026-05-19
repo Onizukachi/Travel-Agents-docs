@@ -69,25 +69,23 @@
 
 ## 7. План работ по новой итерации
 
-- [ ] Шаг 1: Уточнить бизнес-правила по валюте `RUB` в форме переноса: должен ли курс быть `1`, пустым, текущим старым значением или его нужно получать отдельным способом.
-- [ ] Шаг 2: Уточнить, что значит "убрать статус canceled" для исторических данных и отчетов: только запретить новые переходы/UI или также мигрировать существующие `operator_payments.state = 'canceled'`.
-- [ ] Шаг 3: Удалить `canceled` из AASM `OperatorPayment`: state, event `cancel`, scope `canceled`, helper predicate generation, allowed actions.
-- [ ] Шаг 4: Удалить фронтовую поддержку `canceled` у `OperatorPayment`: state name, action mapping/button class, AASM state/event `cancel`, переводы `manager.operator_payments.states/actions.cancel`.
-- [ ] Шаг 5: Пересмотреть backend-места, которые явно учитывают `operator_payments.state = 'canceled'`: `Order#operator_refunded_payments`, `Order#operator_virtual_payments`, `Accounting` SQL, admin reports. Решение зависит от ответа по историческим данным.
-- [ ] Шаг 6: Добавить валюту и курс в данные попапа переноса: defaults из исходного платежа `record.currency` и `record.currency_rate`.
-- [ ] Шаг 7: Добавить в шаблон переноса блок "курс + кнопка обновления + селектор валюты" по паттерну `_operator_payment_editor.hjs`.
-- [ ] Шаг 8: Добавить в transfer popup загрузку актуальных курсов через `record.operator` или `order.package.operator`, выбрать курс по текущей валюте и обновлять `data.currency_rate` по кнопке.
-- [ ] Шаг 9: Передавать `currency` и `currency_rate` из `Manager::OperatorPaymentsController#transfer` в `OperatorPayments::Transfer`.
-- [ ] Шаг 10: В `OperatorPayments::Transfer#create_target_operator_payment!` сохранять пришедшие `currency` и `currency_rate`; если они не пришли, использовать значения исходного `payment`.
-- [ ] Шаг 11: В `OperatorPayments::Transfer` логировать создание целевого платежа через `ManagerTracker` так же, как в `Manager::ResourceController`: собрать трек до save или использовать эквивалентный безопасный порядок, затем сохранить лог после успешного создания.
-- [ ] Шаг 12: Обновить/добавить focused specs для `OperatorPayments::Transfer`: создание целевого платежа с валютой/курсом, fallback на валюту/курс исходного платежа, лог создания, отсутствие создания при `state = transfer`.
-- [ ] Шаг 13: Выполнить статические проверки CoffeeScript/Ruby и focused RSpec для измененного сервиса.
+- [x] Шаг 1: Уточнить бизнес-правила по валюте `RUB` в форме переноса: курс для `RUB` должен быть `1`.
+- [x] Шаг 2: Уточнить, что значит "убрать статус canceled": статус остается на беке, на фронте скрывается возможность перехода в него.
+- [ ] Шаг 3: Скрыть frontend action `cancel` для `OperatorPayment`, не меняя backend AASM и финансовую логику исторических `canceled`.
+- [ ] Шаг 4: Добавить валюту и курс в данные попапа переноса: defaults из исходного платежа `record.currency` и `record.currency_rate`; если данных нет, fallback `currency = 'USD'`, `currency_rate = 0.0`.
+- [ ] Шаг 5: Добавить в шаблон переноса блок "курс + кнопка обновления + селектор валюты" по паттерну `_operator_payment_editor.hjs`.
+- [ ] Шаг 6: Добавить в transfer popup загрузку актуальных курсов через `record.operator` или `order.package.operator`, выбрать курс по текущей валюте, для `RUB` ставить `1`, обновлять `data.currency_rate` по кнопке.
+- [ ] Шаг 7: Передавать `currency` и `currency_rate` из `Manager::OperatorPaymentsController#transfer` в `OperatorPayments::Transfer`.
+- [ ] Шаг 8: В `OperatorPayments::Transfer#create_target_operator_payment!` сохранять пришедшие `currency` и `currency_rate`; если они не пришли, использовать fallback `USD` и `0.0`.
+- [ ] Шаг 9: В `OperatorPayments::Transfer` логировать создание целевого платежа в целевом заказе через `ManagerTracker` так же, как в `Manager::ResourceController`; сумма в логе остается как в `ManagerTracker`.
+- [ ] Шаг 10: Обновить/добавить focused specs для `OperatorPayments::Transfer`: создание целевого платежа с валютой/курсом, fallback `USD`/`0.0`, лог создания в целевом заказе, отсутствие создания при `state = transfer`.
+- [ ] Шаг 11: Выполнить статические проверки CoffeeScript/Ruby и focused RSpec для измененного сервиса.
 
 ## 8. Вопросы для уточнения
 
-- Что делать с уже существующими `operator_payments` в состоянии `canceled`: мигрировать в другой статус, оставить в базе как историческое значение без UI/action, или предварительно проверить наличие таких записей?
-- Если `canceled` удаляем полностью, как пересчитать места, где он участвовал в финансовой логике: исключения из Accounting SQL и расчеты `operator_refunded_payments` / `operator_virtual_payments`?
-- Для валюты `RUB` в форме переноса какой курс должен выставляться при нажатии на обновление: `1`, текущее значение исходного платежа, или `RUB` нужно убрать из доступного списка для переноса?
-- При создании целевого платежа переносом, если фронт не прислал валюту/курс, правильный fallback: брать с исходного `OperatorPayment`?
-- Лог создания целевого платежа должен писаться в лог целевого заказа, исходного заказа или в оба? `ManagerTracker` по умолчанию для созданного `OperatorPayment` запишет его в целевой заказ.
-- Сумма в логе должна быть целым числом, как сейчас делает `ManagerTracker` через `amount.to_i`, или нужно сохранять дробную часть для переносов?
+- Ответ: существующие `operator_payments.state = 'canceled'` не мигрировать; backend-статус оставить.
+- Ответ: финансовую backend-логику с `canceled` не менять; скрыть только frontend-переход в статус.
+- Ответ: для валюты `RUB` курс должен быть `1`.
+- Ответ: если фронт не прислал валюту/курс, fallback `currency = 'USD'`, `currency_rate = 0.0`.
+- Ответ: лог создания целевого платежа писать в целевой заказ; в исходном заказе уже пишется лог переноса.
+- Ответ: сумма в логе остается как в `ManagerTracker`.
