@@ -76,7 +76,7 @@
 - [x] Шаг 5: Добавить в шаблон переноса блок "курс + кнопка обновления + селектор валюты" по паттерну `_operator_payment_editor.hjs`.
 - [x] Шаг 6: Добавить в transfer popup загрузку актуальных курсов через `record.operator` или `order.package.operator`, выбрать курс по текущей валюте, для `RUB` ставить `1`, обновлять `data.currency_rate` по кнопке.
 - [x] Шаг 7: Передавать `currency` и `currency_rate` из `Manager::OperatorPaymentsController#transfer` в `OperatorPayments::Transfer`.
-- [x] Шаг 8: В `OperatorPayments::Transfer#create_target_operator_payment!` сохранять пришедшие `currency` и `currency_rate`; если они не пришли, использовать fallback `USD` и `0.0`.
+- [x] Шаг 8: В `OperatorPayments::Transfer#create_target_operator_payment!` сохранять пришедшие `currency` и `currency_rate`; если `currency` не пришла, брать валюту исходного `OperatorPayment`, fallback `USD`; если `currency_rate` не пришел, брать текущий курс для выбранной валюты, для `RUB` курс `1`.
 - [x] Шаг 9: В `OperatorPayments::Transfer` логировать создание целевого платежа в целевом заказе через `ManagerTracker` так же, как в `Manager::ResourceController`; сумма в логе остается как в `ManagerTracker`.
 - [x] Шаг 10: Обновить/добавить focused specs для `OperatorPayments::Transfer`: создание целевого платежа с валютой/курсом, fallback `USD`/`0.0`, лог создания в целевом заказе, отсутствие создания при `state = transfer`.
 - [x] Шаг 11: Выполнить статические проверки CoffeeScript/Ruby и focused RSpec для измененного сервиса.
@@ -94,6 +94,6 @@
 - Ответ: существующие `operator_payments.state = 'canceled'` не мигрировать; backend-статус оставить.
 - Ответ: финансовую backend-логику с `canceled` не менять; скрыть только frontend-переход в статус.
 - Ответ: для валюты `RUB` курс должен быть `1`.
-- Ответ: если фронт не прислал валюту/курс, fallback `currency = 'USD'`, `currency_rate = 0.0`.
+- Ответ: если фронт не прислал валюту, брать `currency` исходного `OperatorPayment`, fallback `USD`; если не прислал курс, брать текущий курс выбранной валюты, для `RUB` курс `1`.
 - Ответ: лог создания целевого платежа писать в целевой заказ; в исходном заказе уже пишется лог переноса.
 - Ответ: сумма в логе остается как в `ManagerTracker`.
