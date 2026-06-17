@@ -49,39 +49,49 @@
 
 ## 3. Структурированный список задач
 
-- [ ] Шаг 1: Создать миграцию для таблицы `operator_organization_vat_rates` с полями `operator_organization_id`, `vat`, `starts_at`, `ends_at` и индексами для выборки по организации и периоду.
-- [ ] Шаг 2: Добавить модель `OperatorOrganizationVatRate` с ассоциациями, базовыми валидациями дат и валидацией диапазона `vat` от 1 до 100.
-- [ ] Шаг 3: Реализовать валидацию непересекающихся периодов для ставок одной организации, включая открытые интервалы.
-- [ ] Шаг 4: Добавить в `OperatorOrganization` ассоциацию `has_many :vat_rates`, nested attributes и метод выбора ставки на дату `vat_on(date)`.
-- [ ] Шаг 5: Реализовать автозакрытие предыдущей открытой ставки при создании новой ставки с более поздней датой начала.
-- [ ] Шаг 6: Обновить `app/admin/operator_organizations.rb`: убрать старое поле `vat` из `permit_params`, `index`, `show`, `form`; добавить nested form и отображение истории ставок в порядке `starts_at DESC`.
-- [ ] Шаг 7: Обновить места фискализации в `Uniteller`, чтобы VAT поставщика выбирался через историю ставок по `receipt.order.created_at.to_date`.
-- [ ] Шаг 8: Оставить в коде заметку о том, что `CheckOnline` требует отдельного маппинга VAT в `TaxId`, но не менять текущую интеграцию в рамках этой задачи.
-- [ ] Шаг 9: Добавить rake-задачу переноса данных из `operator_organizations.vat` в новую таблицу со `starts_at = 2026-01-01`.
-- [ ] Шаг 10: Добавить/обновить фабрики и RSpec-тесты для модели ставок, выбора ставки по дате, автозакрытия периодов и `Uniteller`.
-- [ ] Шаг 11: Запустить точечные проверки: миграция, релевантные спеки, `git diff --check`.
+- [x] Шаг 1: Создать миграцию для таблицы `operator_organization_vat_rates` с полями `operator_organization_id`, `vat`, `starts_at`, `ends_at` и индексами для выборки по организации и периоду.
+- [x] Шаг 2: Добавить модель `OperatorOrganizationVatRate` с ассоциациями, базовыми валидациями дат и валидацией диапазона `vat` от 1 до 100.
+- [x] Шаг 3: Реализовать валидацию непересекающихся периодов для ставок одной организации, включая открытые интервалы.
+- [x] Шаг 4: Добавить в `OperatorOrganization` ассоциацию `has_many :vat_rates`, nested attributes и метод выбора ставки на дату `vat_on(date)`.
+- [x] Шаг 5: Реализовать автозакрытие предыдущей открытой ставки при создании новой ставки с более поздней датой начала.
+- [x] Шаг 6: Обновить `app/admin/operator_organizations.rb`: убрать старое поле `vat` из `permit_params`, `index`, `show`, `form`; добавить nested form и отображение истории ставок в порядке `starts_at DESC`.
+- [x] Шаг 7: Обновить места фискализации в `Uniteller`, чтобы VAT поставщика выбирался через историю ставок по `receipt.order.created_at.to_date`.
+- [x] Шаг 8: Оставить в коде заметку о том, что `CheckOnline` требует отдельного маппинга VAT в `TaxId`, но не менять текущую интеграцию в рамках этой задачи.
+- [x] Шаг 9: Добавить rake-задачу переноса данных из `operator_organizations.vat` в новую таблицу со `starts_at = 2026-01-01`.
+- [x] Шаг 10: Добавить/обновить фабрики и RSpec-тесты для модели ставок, выбора ставки по дате, автозакрытия периодов и `Uniteller`.
+- [x] Шаг 11: Запустить точечные проверки: миграция, релевантные спеки, `git diff --check`.
 - [ ] Шаг 12: После изменения `.agents/**/*` синхронизировать `AGENTS.md` и `.agents/` в `../agents_md/`, выполнить там `git pull`, затем commit и push зеркала согласно правилам проекта.
 
 ## 4. Заметки для восстановления сессии
 
 Рабочая директория: `/home/hikaru/projects/work/leveltravel`.
 
-На момент создания файла код еще не менялся, кроме подготовки плана в этой задаче. Уже исследованы текущие точки интеграции:
+Текущее состояние после реализации:
 
 - `app/models/operator_organization.rb`
-  - Сейчас хранит плоский `vat` как `integer`.
-  - Истории ставок нет.
+  - Добавлены `has_many :vat_rates`, `accepts_nested_attributes_for`, выбор ставки через `vat_on(date)`.
+  - Реализованы нормализация периодов и защита от пересечений.
 - `app/admin/operator_organizations.rb`
-  - Сейчас показывает и редактирует поле `vat` напрямую.
-  - В проекте есть рабочие примеры nested form через `f.has_many`.
+  - Убрано прямое редактирование и отображение legacy-поля `vat`.
+  - Добавлена nested form и таблица истории ставок НДС.
 - `app/apis/fiscal_processor/uniteller.rb`
-  - Сейчас берет VAT напрямую через `line_item.supplier&.vat`.
+  - Переведен на `line_item.supplier&.vat_on(receipt.order.created_at.to_date)`.
 - `app/apis/fiscal_processor/check_online.rb`
-  - Сейчас для этих строк вообще не использует ставку поставщика и отправляет фиксированный `TaxId`.
+  - Не изменен функционально; оставлен `TODO` про будущий маппинг VAT в `TaxId`.
 - `app/apis/fiscal_processor/constants.rb`
-  - Для `CheckOnline` виден только `VATS[:without] = 4`, поэтому маппинг пользовательских ставок пока не определен.
+  - Непрямо подтверждает, что `CheckOnline` пока требует отдельной доработки по маппингу.
 - `db/schema.rb`
-  - В `operator_organizations` уже есть столбец `vat`, который пока остается в базе.
+  - Добавлена таблица `operator_organization_vat_rates`.
+- `lib/tasks/operator_organization_vat_rates.rake`
+  - Добавлена rake-задача backfill из legacy-поля `operator_organizations.vat`.
+- `spec/models/operator_organization_vat_rate_spec.rb`
+  - Покрывает диапазон VAT, порядок дат, overlap и `active_on?`.
+- `spec/models/operator_organization_spec.rb`
+  - Покрывает `vat_on`, автозакрытие открытой ставки и in-memory overlap.
+- `spec/apis/fiscal_processor/uniteller_spec.rb`
+  - Проверяет, что `Uniteller` берет VAT по дате заказа.
+- `spec/integration/operator_organization_vat_rates_rake_spec.rb`
+  - Проверяет backfill и идемпотентность rake-задачи.
 
 Уже согласованные решения:
 
@@ -94,13 +104,16 @@
 - для переноса используются только значения `vat` от 1 до 100;
 - значение "без НДС" не поддерживается;
 - старое поле `operator_organizations.vat` пока не удаляется, только уходит из админки;
-- изменение нужно сделать для `Uniteller`;
+- изменение сделано для `Uniteller`;
 - `CheckOnline` пока остается без изменений, но в коде и плане нужно сохранить заметку о будущем маппинге VAT в `TaxId`;
 - при вставке ставки в середину истории менеджер сам указывает `ends_at`, автоматически закрывается только предыдущая открытая ставка;
 - ставки в админке сортируются по `starts_at DESC`.
+- legacy-поле `operator_organizations.vat` остается в БД и используется как fallback, если исторических ставок для даты нет.
 
 Если сессия прервется, продолжать с:
 
 1. синхронизации этого файла в `../agents_md/` по обязательному правилу проекта;
-2. перехода к шагу 1 из списка задач и начала реализации схемы данных;
-3. отдельно не забыть оставить в коде заметку про будущий `CheckOnline` VAT mapping.
+2. при необходимости дополнительной верификации можно повторить focused host-side RSpec без Spring:
+   `DISABLE_SPRING=1 bundle exec rspec spec/models/operator_organization_vat_rate_spec.rb spec/models/operator_organization_spec.rb spec/apis/fiscal_processor/uniteller_spec.rb spec/integration/operator_organization_vat_rates_rake_spec.rb`
+3. если понадобится CI-эквивалентный прогон, использовать skill `leveltravel-tests`; в этой сессии запускались только focused host-side проверки;
+4. отдельно не забыть, что `CheckOnline` по-прежнему требует отдельного маппинга VAT в `TaxId`.
