@@ -38,7 +38,6 @@
   - `dynamics` for dynamic pricing/search logs.
 - For logs written through `Rails.application.config.x.logger`, first check `json.payload` in Elasticsearch.
 - If code writes a structured hash like `Rails.application.config.x.logger.info(tag: 'payment_router', ...)`, expect fields under `json.payload.*` and probe there before trying flattened keys.
-- When the user references a file/line and asks for logs, inspect the code first to identify the actual logged keys/tags/events, then search Elasticsearch by those fields instead of searching by filename.
 
 ### When frontend changes are not visible
 
