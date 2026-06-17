@@ -46,8 +46,8 @@ Use this when `manager/index.prod.js` or another compiled asset still contains o
 
 After every change to any of:
 - `AGENTS.md`
-- `.tasks/**/*`
-- `.docs/**/*`
+- `.agents/.tasks/**/*`
+- `.agents/.docs/**/*`
 
 Do all of the following:
 1. Mirror updated files into `../agents_md/`.
@@ -233,11 +233,11 @@ bin/rspec spec/models/some_model_spec.rb:25
 
 ## 16) Payments
 
-- For order/payment/callback/receipt flows, follow: `.docs/payments.md`.
+- For order/payment/callback/receipt flows, follow: `.agents/.docs/payments.md`.
 
 ## 17) PAPI v3 Documentation
 
-- For any added/changed PAPI v3 route or contract, update docs using: `.docs/papi_v3_docs.md`.
+- For any added/changed PAPI v3 route or contract, update docs using: `.agents/.docs/papi_v3_docs.md`.
 - Keep PAPI v3 docs in sync in the same PR as code changes.
 
 ## 18) Definition of Done
