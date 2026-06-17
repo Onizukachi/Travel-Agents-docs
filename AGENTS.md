@@ -29,6 +29,17 @@
 - Use `lt console` for interactive debugging.
 - Use `binding.irb` for breakpoints in development.
 
+### Elastic logs
+
+- When the user asks to inspect production/staging/integration Elasticsearch logs (for example: `достань rails логи с прода`, `посмотри nginx логи`, `найди ошибки в searcher`), use the `.agents/skills/lvtv-elastic-logs` skill.
+- Choose the MCP profile by service family:
+  - `main` for rails, nginx, gateway, web-gateway, sidekiq, nextjs and most core app logs.
+  - `integrations` for search/integration pipeline services.
+  - `dynamics` for dynamic pricing/search logs.
+- For logs written through `Rails.application.config.x.logger`, first check `json.payload` in Elasticsearch.
+- If code writes a structured hash like `Rails.application.config.x.logger.info(tag: 'payment_router', ...)`, expect fields under `json.payload.*` and probe there before trying flattened keys.
+- When the user references a file/line and asks for logs, inspect the code first to identify the actual logged keys/tags/events, then search Elasticsearch by those fields instead of searching by filename.
+
 ### When frontend changes are not visible
 
 If changes in JS, templates, or frontend I18n do not appear after a browser hard reload and service restart, refresh Rails/Sprockets assets inside the Rails container:
