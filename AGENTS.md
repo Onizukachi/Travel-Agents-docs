@@ -22,11 +22,12 @@
 ### LT CLI in shell session
 
 - Before any LT command, run: `source ./lt.sh`.
-- Run LT commands through the loaded function (`lt logs rails`, `lt status`, `lt console`, etc.).
+- Run LT commands through the loaded function (`lt logs rails`, `lt status`, `lt sh`, etc.).
+- For any interaction with Rails inside the container, first enter the Rails container with `lt sh`, then run the needed command there.
 
 ### Debugging
 
-- Use `lt console` for interactive debugging.
+- Use `lt sh`, then run `bundle exec rails console` inside the Rails container for interactive debugging.
 - Use `binding.irb` for breakpoints in development.
 
 ### Elastic logs
@@ -151,11 +152,13 @@ Extract to namespaced services (e.g. `Clouds::CardGenerator`) when logic is:
 
 ### Migration workflow
 
-After migration edits:
-1. Run `bundle exec rails db:migrate`.
-2. If needed, verify rollback path.
-3. Keep `db/schema.rb` limited to relevant changes.
-4. Keep `ActiveRecord::Schema.define(version: ...)` aligned with latest applied migration.
+Do not create migration files manually.
+1. Generate migrations only through Rails generator inside the Rails container: `source ./lt.sh`, then `lt sh`, then `bundle exec rails generate migration ...`.
+2. Apply migrations inside the Rails container: `source ./lt.sh`, then `lt sh`, then `bundle exec rails db:migrate`.
+3. If needed, verify rollback path inside the Rails container: `bundle exec rails db:rollback STEP=1`, then `bundle exec rails db:migrate`.
+4. Run any other Rails migration-related commands from inside `lt sh`.
+5. Keep `db/schema.rb` limited to relevant changes.
+6. Keep `ActiveRecord::Schema.define(version: ...)` aligned with latest applied migration.
 
 ## 8) Job Rules
 
