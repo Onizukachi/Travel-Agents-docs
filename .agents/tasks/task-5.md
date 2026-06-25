@@ -1,25 +1,28 @@
-# Пересчет стоимости пакета вниз для валютных заказов
+# Пересчет цены пакета вниз для валютных заказов
 
-## 1. Цель
+## 1. Что сделано
 
-- Дать сотрудникам контролируемый инструмент для ручного уменьшения стоимости валютного заказа после частичной оплаты.
-- Пересчитывается только стоимость пакета.
-- Допуслуги не участвуют в расчете и не изменяются.
-- Пересчет действует до `18:00` дня применения: если клиент не закрыл долг, изменения по пакету откатываются.
+- Добавлен отдельный сценарий ручного пересчета цены пакета вниз для валютного заказа.
+- Старый пересчет вверх сохранен как отдельное действие в `Order Tools`.
+- Для нового сценария добавлены:
+  - история пересчетов в БД;
+  - отдельная админка с журналом;
+  - автоматическое завершение и автоматический откат.
 
-## 2. Основные правила
+## 2. Почему сделано именно так
 
-- Применимо только к валютным заказам.
-- Должна быть частичная оплата клиента.
-- У заказа должен оставаться долг по пакету.
-- Одновременно у заказа может быть только один активный down-recalculation.
-- После автоотмены можно запускать новый пересчет в тот же день.
-- Логика учета оплат клиента остается такой же, как в [update_price_service.rb](/Users/hikaru/projects/work/leveltravel/app/services/order/update_price_service.rb):
-  - оплаты и сертификат учитываются на уровне всего заказа;
-  - отдельно выделять, какая часть оплаты пришлась на допуслуги, не пытаемся;
-  - это осознанное упрощение.
+- Пересчет вниз вынесен отдельно, чтобы не ломать и не переопределять старую логику пересчета вверх.
+- Меняется только пакет, потому что задача относится к валютной стоимости основного туристического продукта, а не к допуслугам.
+- Все расчеты собраны в одном сервисе `Order::PriceRecalculations::Calculation`, чтобы:
+  - не дублировать формулы между preview и apply;
+  - не размазывать бизнес-правила по нескольким одноразовым сервисам;
+  - держать единый источник истины для расчета.
+- Контроллер вызывает `Calculation` напрямую для предпросмотра, а `Apply` вызывает его повторно для применения. Это избавило от пустой обертки `Preview`.
+- Автообработка вынесена в воркер по расписанию, чтобы:
+  - завершать пересчет, если клиент успел закрыть долг;
+  - откатывать пересчет после `18:00`, если долг остался.
 
-## 3. Что меняется и что не меняется
+## 3. Что меняется в заказе
 
 ### Меняется
 
@@ -31,348 +34,217 @@
 - `order_extras`
 - `package.stat_exchange_rate`
 - `package.stat_currency_name`
-- платежи клиента
+- клиентские платежи
 - платежи туроператору
 
-## 4. Модель данных
+## 4. Основные правила
 
-### Таблица `order_price_recalculations`
+- Пересчет применим только к валютным заказам.
+- У заказа должен быть хотя бы один оплаченный платеж.
+- У заказа должен оставаться долг по пакету.
+- Одновременно у заказа может быть только один активный down-recalculation.
+- После отмены или завершения можно запускать новый пересчет повторно.
+- Если целевой курс не уменьшает цену пакета, пересчет не применяется.
 
-- `order_id`
-  Заказ, для которого выполнялся пересчет.
-- `package_id`
-  Пакет, чья цена менялась.
-- `status`
-  Статус пересчета: `applied`, `completed`, `canceled`, `rejected`.
-- `source_currency`
-  Валюта пакета на момент пересчета.
-- `source_rate`
-  Курс пакета на момент пересчета.
-- `target_currency`
-  Валюта, по которой считается новый пакет.
-- `target_rate`
-  Целевой курс пересчета.
-- `package_price_before`
-  Полная цена пакета до пересчета (`net_price + fuel_charge`).
-- `package_price_after`
-  Полная цена пакета после пересчета.
-- `net_price_before`
-  `package.net_price` до применения.
-- `fuel_charge_before`
-  `package.fuel_charge` до применения.
-- `net_price_after`
-  `package.net_price` после применения.
-- `fuel_charge_after`
-  `package.fuel_charge` после применения.
-- `applied_at`
-  Когда пересчет был применен.
-- `expires_at`
-  Дедлайн автоотмены. Для первой итерации: сегодня в `18:00`.
-- `completed_at`
-  Когда пересчет успешно завершился оплатой долга.
-- `canceled_at`
-  Когда был выполнен откат.
-- `rejection_reason`
-  Причина отказа при `apply`.
-- `cancel_reason`
-  Причина отката.
-- `initiator_id`
-  Сотрудник, который запустил пересчет.
+## 5. Таблица `order_price_recalculations`
+
+Создана таблица для аудита и жизненного цикла пересчета.
+
+### Поля
+
+- `order_id` — заказ, для которого запускался пересчет.
+- `package_id` — пакет, чья цена менялась.
+- `status` — `applied`, `completed`, `canceled`, `rejected`.
+- `source_currency`, `source_rate` — исходная валюта и курс пакета.
+- `target_currency`, `target_rate` — целевая валюта и курс пересчета.
+- `package_price_before`, `package_price_after` — цена пакета до и после пересчета.
+- `net_price_before`, `fuel_charge_before` — snapshot компонентов пакета до применения.
+- `net_price_after`, `fuel_charge_after` — snapshot компонентов пакета после применения.
+- `applied_at`, `expires_at`, `completed_at`, `canceled_at` — временные точки жизненного цикла.
+- `rejection_reason` — причина отказа.
+- `cancel_reason` — причина отката.
+- `initiator_id` — пользователь, запустивший пересчет; поле nullable, потому что запуск может быть автоматическим.
 - `created_at`, `updated_at`
-  Служебные поля.
 
-### Зачем нужны эти поля
+### Ограничения
 
-- `source_*`, `target_*`
-  Чтобы в preview, журнале и экспорте было видно, какой курс был у заказа и какой курс применили.
-- `package_price_before`, `package_price_after`
-  Чтобы быстро видеть итог изменения пакета без повторного расчета.
-- `net_price_*`, `fuel_charge_*`
-  Это фактический snapshot для точного применения и отката.
-- `status` и временные поля
-  Чтобы поддерживать жизненный цикл: применен, завершен, отменен, отклонен.
-- `rejection_reason`, `cancel_reason`
-  Для аудита и понятного объяснения сотруднику.
+- В таблице связей не используются foreign keys.
+- Для обязательных связей стоят `not null`.
+- Для `initiator_id` `null` разрешен.
 
 ### Индексы
 
-- `index(order_id, status)` для активных и исторических пересчетов по заказу.
-- `index(package_id)` для аудита по пакету.
-- `index(expires_at, status)` для фоновой автоотмены.
-- `index(initiator_id)` для журнала и выгрузок.
+- `(order_id, status)`
+- `package_id`
+- `(expires_at, status)`
+- `initiator_id`
 
-## 5. Модели
+## 6. Модели и админка
 
-- `OrderPriceRecalculation`
-  История пересчетов вниз, активное состояние пересчета и snapshot package price components.
-- `Order`
-  Источник общей оплаты клиента, долга, платежей ТО и связи с пересчетами.
-- `Package`
-  Источник валюты, курса и изменяемых полей `net_price` / `fuel_charge`.
-- `Payment`
-  Источник оплат клиента и `operator_exchange_rate`.
-- `OperatorPayment`
-  Источник оплат ТО для ограничения пересчета по regular flights.
-- `Markup::Application`
-  Источник нижней границы по applied exchange-rate markup.
-- `OrderLog`
-  Дополнительный аудит в карточке заказа.
+- Добавлена модель `OrderPriceRecalculation`.
+- В `Order` добавлена связь `has_many :order_price_recalculations`.
+- Добавлена отдельная ActiveAdmin-страница `order_price_recalculations` для просмотра истории, статусов и ключевых значений пересчета.
+- Добавлены переводы модели, атрибутов и статусов в `ru.yml`.
 
-## 6. Сервисы
+## 7. Как считается пересчет
 
-- `Order::PriceRecalculations::Eligibility`
-  Проверяет, можно ли запускать пересчет.
-- `Order::PriceRecalculations::PackageReplacementDetector`
-  Определяет, меняли ли пакет.
-- `Order::PriceRecalculations::TargetRateResolver`
-  Возвращает `source_currency`, `source_rate`, `target_currency`, `target_rate`.
-- `Order::PriceRecalculations::MarkupFloorResolver`
-  Возвращает минимально допустимую цену пакета по applied валютному markup.
-- `Order::PriceRecalculations::RecalculatableAmountCalculator`
-  Считает на лету, какая часть пакета может быть уменьшена.
-- `Order::PriceRecalculations::Preview`
-  Собирает расчет до применения.
-- `Order::PriceRecalculations::Apply`
-  Повторно проверяет условия, сохраняет историю и обновляет пакет.
-- `Order::PriceRecalculations::Complete`
-  Закрывает активный пересчет как успешный после погашения долга.
-- `Order::PriceRecalculations::CancelExpired`
-  Откатывает пакет после `18:00`, если долг не закрыт.
+Расчет выполняет `Order::PriceRecalculations::Calculation`.
 
-## 7. Правила определения значений
+### Что проверяется до расчета
 
-### Определение замены пакета
+- нет ли уже активного пересчета;
+- валютный ли пакет;
+- есть ли оплаченные платежи;
+- остался ли долг по пакету;
+- есть ли валютная стоимость пакета;
+- есть ли исходный курс пакета;
+- можно ли определить целевой курс;
+- меньше ли целевой курс, чем исходный.
 
-Основной источник:
-- `OrderLog kind: :package_replace`
+### Откуда берется целевой курс
 
-Fallback:
-- `order.versions` с изменением `package_id`
-
-### Исходные и целевые курс/валюта
-
-Исходные значения:
 - `source_currency = package.stat_currency_name`
 - `source_rate = package.stat_exchange_rate`
+- если пакет меняли, `target_rate = source_rate`
+- если пакет не меняли, `target_rate = operator_exchange_rate` последнего оплаченного платежа
 
-Целевые значения:
-- `target_currency = package.stat_currency_name`
-- если пакет меняли:
-  - `target_rate = package.stat_exchange_rate`
-- если пакет не меняли:
-  - `target_rate = last_paid_payment.operator_exchange_rate`
+Признак замены пакета определяется внутри `Calculation` по:
+- `OrderLog kind: 'package_replace'`
+- fallback через `order.versions` с изменением `package_id`
 
-`last_paid_payment`:
-- `order.payments.paid_and_not_fully_refunded.where.not(operator_exchange_rate: nil).order(:created_at).last`
-
-Если `target_rate` не найден или `target_rate >= source_rate`, пересчет вниз неприменим.
-
-### Релевантный валютный markup
-
-- Берем `Markup::Application` по текущему `package_id`.
-- Используем только markup типа `exchange_rate`.
-- Для первой итерации берем последнюю запись по `created_at DESC`.
-- Если записи нет, markup не ограничивает снижение.
-
-## 8. Формулы расчета
-
-### 8.1. Базовая цена пакета
+### Базовые суммы
 
 - `current_package_price = package.full_price`
+- `paid_amount_rub = order.available_certificate_amount + сумма оплаченных платежей`
 
-### 8.2. Учет оплат клиента
+Если у всех релевантных платежей есть `operator_exchange_rate`, дополнительно считается валютный хвост долга:
 
-Как в `Order::UpdatePriceService`:
+- `paid_amount_in_foreign_currency`
+- `debt_in_foreign_currency`
 
-- `paid_amount_rub = order.available_certificate_amount + order.payments.paid_and_not_fully_refunded.sum(&:paid_amount)`
-- `paid_amount_in_foreign_currency = certificate_part_in_foreign_currency + order.payments.paid_and_not_fully_refunded.sum(&:paid_amount_in_foreign_currency)`
+### Кандидатная новая цена
 
-Где:
-- `certificate_part_in_foreign_currency = order.available_certificate_amount / payments.first.operator_exchange_rate`
-- используется только если у всех релевантных платежей есть `operator_exchange_rate`
+Если у всех платежей есть курс:
 
-### 8.3. Кандидатная новая цена пакета
-
-Если у всех релевантных платежей есть `operator_exchange_rate`:
-
-- `debt_in_foreign_currency = package.full_price_in_foreign_currency - paid_amount_in_foreign_currency`
 - `candidate_package_price = target_rate * debt_in_foreign_currency + paid_amount_rub`
 
-Если не у всех платежей есть `operator_exchange_rate`:
+Если хотя бы у одного платежа курс отсутствует:
 
 - `candidate_package_price = target_rate * package.full_price_in_foreign_currency`
 
-### 8.4. Расчет допустимой базы пересчета
+### Ограничение по regular flights
 
-Обычный случай:
+Если заказ относится к regular flights, уменьшение ограничивается не только долгом клиента, но и неоплаченным хвостом туроператору:
 
-- `client_package_debt = [current_package_price - paid_amount_rub, 0].max`
-- допустимая база пересчета равна `client_package_debt`
+- `client_package_debt = current_package_price - paid_amount_rub`
+- `package_operator_paid = сумма operator_payments по service_type: 'order'`
+- `operator_package_unpaid = current_package_price - package_operator_paid`
+- `recalculatable_amount = min(client_package_debt, operator_package_unpaid)`
 
-Regular flights:
+Для обычного случая:
 
-- `package_operator_paid = operator_payments.where(service_type: 'order').sum(&:paid_amount)`
-- `operator_package_unpaid = [current_package_price - package_operator_paid, 0].max`
-- допустимая база пересчета равна `[client_package_debt, operator_package_unpaid].min`
+- `recalculatable_amount = client_package_debt`
 
-### 8.5. Ограничение снижения
+### Нижние границы
 
-Пересчет не должен уменьшать пакет ниже:
+Новая цена пакета не должна быть ниже:
 
-- цены по `source_rate`
-- цены по applied exchange-rate markup
+- цены по исходному курсу `source_rate`;
+- цены по последнему примененному `exchange_rate` markup;
+- цены, которая нарушает ограничение по допустимой части уменьшения.
 
-Порог по исходному курсу:
+Итоговая формула:
 
-- если у всех платежей есть курс:
-  - `source_package_floor_price = source_rate * debt_in_foreign_currency + paid_amount_rub`
-- иначе:
-  - `source_package_floor_price = source_rate * package.full_price_in_foreign_currency`
+- `package_price_after = max(candidate_package_price, source_package_floor_price, markup_package_floor_price, recalculatable_floor_price)`
 
-Порог по markup:
+Если `package_price_after >= current_package_price`, пересчет не применяется.
 
-- `markup_package_floor_price = markup_application.base_price + markup_application.markup_value`
+### Раскладка по компонентам пакета
 
-Финальная цена пакета:
+После определения новой полной цены пакета:
 
-- `package_price_after = [candidate_package_price, source_package_floor_price, markup_package_floor_price].max`
+- считается `ratio = package_price_after / current_package_price`
+- пропорционально пересчитываются `net_price_after` и `fuel_charge_after`
 
-Если `package_price_after >= current_package_price`, пересчет вниз не применяется.
+Это сделано для того, чтобы применять и откатывать не абстрактную сумму, а реальные поля пакета.
 
-### 8.6. Распределение по компонентам пакета
-
-- `ratio = package_price_after / current_package_price`
-- `net_price_after = package.net_price * ratio`
-- `fuel_charge_after = package.fuel_charge * ratio`
-
-Последний шаг распределения должен компенсировать округление так, чтобы:
-
-- `net_price_after + fuel_charge_after == package_price_after`
-
-## 9. Flow
+## 8. Жизненный цикл пересчета
 
 ### Preview
 
-1. Сотрудник вводит `order_id`.
-2. `Eligibility` проверяет применимость.
-3. `PackageReplacementDetector` определяет факт замены пакета.
-4. `TargetRateResolver` возвращает курсы.
-5. `RecalculatableAmountCalculator` считает допустимую базу пересчета.
-6. `MarkupFloorResolver` возвращает нижнюю границу.
-7. `Preview` показывает:
-   - курс заказа;
-   - целевой курс;
-   - цену пакета до/после;
-   - сумму, которая может быть уменьшена, если ее нужно показать в интерфейсе;
-   - причину отказа, если заказ не подходит.
+- В админке пользователь вводит `order_id`.
+- Контроллер вызывает `Order::PriceRecalculations::Calculation`.
+- Если заказ подходит, показываются:
+  - исходный курс;
+  - целевой курс;
+  - цена пакета до;
+  - цена пакета после.
+- Если заказ не подходит, показывается текстовая причина отказа.
 
 ### Apply
 
-1. Повторяем все проверки preview.
-2. Если заказ не подходит, создаем `OrderPriceRecalculation` со статусом `rejected`.
-3. Если подходит:
-   - сохраняем `net_price_before`, `fuel_charge_before`, `package_price_before`;
-   - рассчитываем `*_after`;
-   - обновляем `package.net_price` и `package.fuel_charge`;
-   - создаем `OrderPriceRecalculation` со статусом `applied`;
-   - ставим `applied_at` и `expires_at`;
-   - пишем `OrderLog`.
+- `Order::PriceRecalculations::Apply` повторно вызывает `Calculation`.
+- Если заказ не подходит, создается запись `OrderPriceRecalculation` со статусом `rejected`.
+- Если заказ подходит:
+  - обновляются `package.net_price` и `package.fuel_charge`;
+  - создается запись `OrderPriceRecalculation` со статусом `applied`;
+  - сохраняются snapshot-поля и временные метки;
+  - пишется `OrderLog`.
 
 ### Complete
 
-- Если до `18:00` заказ перестал иметь долг, активный пересчет переводится в `completed`.
+- Если долг по пакету закрыт до истечения срока действия пересчета, запись переводится в `completed`.
 
 ### CancelExpired
 
-1. После `18:00` воркер ищет активные записи `applied`.
-2. Если долг не закрыт:
-   - `package.net_price` и `package.fuel_charge` откатываются из snapshot;
-   - запись переводится в `canceled`;
-   - проставляются `canceled_at`, `cancel_reason`;
-   - создается `OrderLog`.
+- Если после `18:00` долг по пакету не закрыт, пакет откатывается к сохраненным значениям `net_price_before` и `fuel_charge_before`, а запись переводится в `canceled`.
 
-## 10. Примеры расчета
+## 9. Воркер и расписание
 
-### Кейс 1. Обычный валютный заказ, все платежи с курсом
+- Добавлен `OrderPriceRecalculationsCancelWorker`.
+- Он запускается каждые `10` минут.
+- Внутри он:
+  - завершает активные пересчеты, если долг уже закрыт;
+  - после `18:00` отменяет активные пересчеты, если долг остался.
 
-- `package.full_price = 120_000`
-- `package.full_price_in_foreign_currency = 1_200`
-- `source_rate = 100`
-- `target_rate = 90`
-- клиент оплатил `60_000`
-- в валюте это `600`
+Такой polling выбран, чтобы не держать отдельную джобу на каждый пересчет и при этом вовремя реагировать и на оплату, и на дедлайн.
 
-Расчет:
+## 10. Изменения в интерфейсе
 
-- `debt_in_foreign_currency = 1_200 - 600 = 600`
-- `candidate_package_price = 90 * 600 + 60_000 = 114_000`
+В `Order Tools` теперь два независимых действия:
 
-Итог:
+- старый пересчет вверх для валютного заказа;
+- новый пересчет цены пакета вниз для валютного заказа.
 
-- `package_price_before = 120_000`
-- `package_price_after = 114_000`
-- снижение: `6_000`
+Для нового сценария доступны:
 
-### Кейс 2. Не у всех платежей есть курс
+- `Предпросмотр`
+- `Применить`
 
-- `package.full_price = 120_000`
-- `package.full_price_in_foreign_currency = 1_200`
-- `source_rate = 100`
-- `target_rate = 90`
-
-Расчет:
-
-- `candidate_package_price = 90 * 1_200 = 108_000`
-
-Итог:
-
-- пересчитываем весь валютный пакет целиком;
-- платежи в валютной части отдельно не раскладываем.
-
-### Кейс 3. Regular flight, ТО еще не оплачен хвост
-
-- `current_package_price = 120_000`
-- долг клиента по пакету: `50_000`
-- ТО оплачено `90_000`
-- `operator_package_unpaid = 30_000`
-
-Итог:
-
-- `recalculatable_amount = min(50_000, 30_000) = 30_000`
-- сильнее уменьшать нельзя, даже если курс позволяет.
-
-### Кейс 4. Курс дает слишком сильное снижение, срабатывает floor
-
-- `current_package_price = 120_000`
-- `candidate_package_price = 105_000`
-- `source_package_floor_price = 110_000`
-- `markup_package_floor_price = 112_000`
-
-Итог:
-
-- `package_price_after = max(105_000, 110_000, 112_000) = 112_000`
+Также добавлен журнал пересчетов в отдельной админке.
 
 ## 11. Файлы реализации
 
-- `db/migrate/*_create_order_price_recalculations.rb`
+- `db/migrate/20260624115324_create_order_price_recalculations.rb`
 - `app/models/order_price_recalculation.rb`
-- `app/services/order/price_recalculations/eligibility.rb`
-- `app/services/order/price_recalculations/package_replacement_detector.rb`
-- `app/services/order/price_recalculations/target_rate_resolver.rb`
-- `app/services/order/price_recalculations/markup_floor_resolver.rb`
-- `app/services/order/price_recalculations/recalculatable_amount_calculator.rb`
-- `app/services/order/price_recalculations/preview.rb`
+- `app/services/order/price_recalculations/acceptability.rb`
+- `app/services/order/price_recalculations/calculation.rb`
 - `app/services/order/price_recalculations/apply.rb`
 - `app/services/order/price_recalculations/complete.rb`
 - `app/services/order/price_recalculations/cancel_expired.rb`
 - `app/admin/order_tools.rb`
-- `app/views/admin/order_tools/*`
+- `app/views/admin/order_tools/_recalculate_price.html.haml`
 - `app/admin/order_price_recalculations.rb`
 - `app/workers/order_price_recalculations_cancel_worker.rb`
-- `app/workers/orders_with_debt_update_price_worker.rb`
+- `lib/schedule.rb`
 - `config/locales/ru.yml`
+- `spec/services/order/price_recalculations/apply_spec.rb`
+- `spec/services/order/price_recalculations/calculation_spec.rb`
+- `spec/workers/order_price_recalculations_cancel_worker_spec.rb`
 
-## 12. Следующий шаг
+## 12. Что дополнительно было упрощено по ходу реализации
 
-- Реализовать миграцию и модель `OrderPriceRecalculation`.
-- Затем собрать package-only preview и apply поверх текущей логики `Order::UpdatePriceService`.
+- Убран отдельный `Preview`, потому что он только проксировал вызов `Calculation`.
+- Убраны мелкие одноразовые сервисы расчета и резолвинга; их логика встроена в `Calculation`.
+- Переводы и тексты в админке приведены к формулировке `цена пакета`, чтобы интерфейс звучал точнее.
+- Для модели пересчетов добавлены русские названия атрибутов и статусов, чтобы журнал в админке читался без технических кодов.
