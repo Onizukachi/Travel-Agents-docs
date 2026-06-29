@@ -24,10 +24,10 @@ Assume the user has already handled Boundary authorization and target connection
 Prefer the bundled helper from the repository root:
 
 ```bash
-python3 .codex/skills/lvtv-elastic-logs/scripts/mcp_call.py --profile main list_indices '{"index_pattern":"*gateway*"}'
-python3 .codex/skills/lvtv-elastic-logs/scripts/mcp_call.py --profile integrations list_indices '{"index_pattern":"*searcher*"}'
-python3 .codex/skills/lvtv-elastic-logs/scripts/mcp_call.py --profile dynamics list_indices '{"index_pattern":"*dynamic*"}'
-python3 .codex/skills/lvtv-elastic-logs/scripts/mcp_call.py --profile all find_index '{"index_pattern":"*unknown-fragment*"}'
+python3 .agents/skills/lvtv-elastic-logs/scripts/mcp_call.py --profile main list_indices '{"index_pattern":"*gateway*"}'
+python3 .agents/skills/lvtv-elastic-logs/scripts/mcp_call.py --profile integrations list_indices '{"index_pattern":"*searcher*"}'
+python3 .agents/skills/lvtv-elastic-logs/scripts/mcp_call.py --profile dynamics list_indices '{"index_pattern":"*dynamic*"}'
+python3 .agents/skills/lvtv-elastic-logs/scripts/mcp_call.py --profile all find_index '{"index_pattern":"*unknown-fragment*"}'
 ```
 
 ## Generic Workflow
