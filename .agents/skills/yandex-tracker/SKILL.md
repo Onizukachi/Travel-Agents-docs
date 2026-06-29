@@ -7,11 +7,11 @@ description: Work with Yandex Tracker tasks through the REST API. Use when Codex
 
 ## Quick Start
 
-Use the installed `tracker.py` helper for API calls instead of hand-writing `curl`.
-Resolve it from the global Codex skills directory so the skill works from any current working directory:
+Use the bundled `tracker.py` helper from this repository for API calls instead of hand-writing `curl`.
+Resolve it through the current git checkout so the skill works from any directory inside the project:
 
 ```bash
-TRACKER_HELPER="${CODEX_HOME:-$HOME/.codex}/skills/yandex-tracker/scripts/tracker.py"
+TRACKER_HELPER="$(git rev-parse --show-toplevel)/.agents/skills/yandex-tracker/scripts/tracker.py"
 ```
 
 Configure credentials once:
